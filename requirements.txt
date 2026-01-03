@@ -1,0 +1,51 @@
+# Python 版本要求
+# 本项目需要 Python 3.10 或更高版本（Streamlit Cloud 最低要求 Python 3.10）
+# 注意：项目最初在 Python 3.9 环境下开发，现已升级支持 Python 3.10+
+
+# Web 应用框架
+streamlit>=1.18.0            # 当前环境版本: 1.51.0
+
+# YOLO 模型库（核心依赖）
+# Ultralytics 是一个现代化的 YOLO 实现，支持 YOLOv5/v8/v9/v10/v11 等版本
+# 提供完整的训练、验证、推理和导出功能
+ultralytics>=8.0.0           # 当前环境版本: 8.3.235
+
+# 图像处理库
+opencv-python-headless>=4.5  # OpenCV（无 GUI 版本，用于图像和视频处理）
+# 注意：如果环境中安装的是 opencv-python（带 GUI），也可以使用
+# 当前环境检测到: opencv-python 4.12.0.88（如果使用 opencv-python-headless，版本可能不同）
+Pillow>=9.0                  # PIL/Pillow（图像处理），当前环境版本: 12.0.0
+
+# 数值计算和数据处理
+numpy>=1.23                  # 数值计算库，当前环境版本: 1.26.4
+pandas>=1.5                  # 数据处理和分析，当前环境版本: 2.2.2
+
+# 数据可视化
+matplotlib>=3.5.0            # 绘图库（用于生成统计图表），当前环境版本: 3.8.4
+altair>=4.2.0                # 交互式数据可视化库，当前环境版本: 5.0.1
+
+# 配置文件解析
+pyyaml>=6.0                  # YAML 配置文件解析（用于读取 data.yaml），当前环境版本: 6.0.1
+
+# 深度学习框架（train.py 中直接使用 torch）
+# 注意：ultralytics 会自动安装 torch，但 train.py 中直接导入 torch，建议明确列出
+# 如果需要 GPU 支持，请安装 torch>=2.0.0 的 CUDA 版本
+# 安装 CPU 版本：pip install torch torchvision
+# 安装 GPU 版本：访问 https://pytorch.org/ 获取对应 CUDA 版本的安装命令
+# torch>=2.0.0                # PyTorch（ultralytics 会自动安装 CPU 版本，如需 GPU 请手动安装 CUDA 版本）
+
+# ============================================================================
+# 当前虚拟环境已安装的包版本信息（仅供参考，实际安装时以 >= 版本为准）
+# ============================================================================
+# streamlit==1.51.0
+# ultralytics==8.3.235
+# opencv-python==4.12.0.88 (或 opencv-python-headless，版本可能不同)
+# Pillow==12.0.0
+# numpy==1.26.4
+# pandas==2.2.2
+# matplotlib==3.8.4
+# altair==5.0.1
+# PyYAML==6.0.1
+# torch==2.9.1
+# torchvision==0.24.1
+# ============================================================================

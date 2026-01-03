@@ -1,0 +1,10 @@
+﻿时间戳,Unix时间戳,视频文件名,模型路径,置信度阈值,IoU阈值,抽帧步长,推理设备
+2025-12-24 17:46:07,1766569567.3143685,test_video_1.mp4,model\best.pt,0.15,0.25,10,cpu
+2025-12-27 15:17:03,1766819823.7578187,test_video_1.mp4,model\best.pt,0.15,0.25,5,cpu
+2025-12-27 15:39:26,1766821166.145864,test_video_1.mp4,model\best.pt,0.3,0.15,5,cpu
+2025-12-27 15:41:22,1766821282.1061988,test_video_1.mp4,model\best.pt,0.15,0.25,5,cpu
+2025-12-29 23:08:46,1767020926.1478965,test_video_1.mp4,model\best.pt,0.15,0.25,5,cpu
+2025-12-31 11:00:42,1767150042.731598,test_video_1.mp4,model\best.pt,0.15,0.25,5,cpu
+2026-01-03 16:26:29,1767428789.7427046,test_video_1.mp4,C:\Users\潘姣\AppData\Local\Temp\defect_detect_models\best.pt,0.15,0.25,5,cpu
+2026-01-03 16:30:11,1767429011.4838214,test_video_1.mp4,C:\Users\潘姣\AppData\Local\Temp\defect_detect_models\best.pt,0.05,0.25,5,cpu
+2026-01-03 16:36:19,1767429379.892572,test_video_1.mp4,C:\Users\潘姣\AppData\Local\Temp\defect_detect_models\best.pt,0.06,0.15,5,cpu

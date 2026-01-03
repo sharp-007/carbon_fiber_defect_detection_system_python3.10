@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-01-01 11:23:27",
+  "model_path": "/root/autodl-tmp/carbon_fiber_defect_detection_system/runs/run2/train/weights/best.pt",
+  "dataset": "valid (验证集)",
+  "overall_metrics": {
+    "map50": 0.3904729753677122,
+    "map50_95": 0.16274023325346793,
+    "precision": 0.924297604647288,
+    "recall": 0.23076923076923078,
+    "f1_score": 0.36932832055450915
+  },
+  "per_class_metrics": {
+    "carbon-fibre-defect": {
+      "map50_95": 0.16274023325346793,
+      "precision": 0.924297604647288,
+      "recall": 0.23076923076923078,
+      "f1_score": 0.36932832055450915
+    }
+  }
+}

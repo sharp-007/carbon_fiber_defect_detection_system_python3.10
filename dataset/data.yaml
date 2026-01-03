@@ -1,0 +1,13 @@
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 1
+names: ['carbon-fibre-defect']
+
+roboflow:
+  workspace: carbonfibredefect
+  project: carbon-fiber-defect
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/carbonfibredefect/carbon-fiber-defect/dataset/2

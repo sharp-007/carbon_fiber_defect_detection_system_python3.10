@@ -1,0 +1,20 @@
+{
+  "timestamp": "2025-12-31 11:36:19",
+  "model_path": "E:\\AI\\AI经典实践项目\\Github\\目标检测\\carbon_fiber_defect_detection_system\\runs\\run1\\train\\weights\\best.pt",
+  "dataset": "valid (验证集)",
+  "overall_metrics": {
+    "map50": 0.004349654270772892,
+    "map50_95": 0.0006375589934185492,
+    "precision": 0.0025925925925925925,
+    "recall": 0.5384615384615384,
+    "f1_score": 0.005160339107998526
+  },
+  "per_class_metrics": {
+    "carbon-fibre-defect": {
+      "map50_95": 0.0006375589934185492,
+      "precision": 0.0025925925925925925,
+      "recall": 0.5384615384615384,
+      "f1_score": 0.005160339107998526
+    }
+  }
+}
