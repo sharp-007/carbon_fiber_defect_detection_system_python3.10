@@ -916,6 +916,7 @@ results3 = model3("image.jpg")
 本项目已配置支持 Streamlit Cloud 部署，包含以下配置文件：
 
 - **`runtime.txt`**：指定 Python 3.10 版本（Streamlit Cloud 最低要求）
+- **`packages.txt`**：系统级依赖包列表（用于安装 OpenCV 所需的系统库，如 `libGL.so.1`）
 - **`.streamlit/config.toml`**：Streamlit 应用配置文件
 
 #### 部署步骤：
@@ -940,6 +941,7 @@ results3 = model3("image.jpg")
    - 如果模型文件过大，可以考虑使用 Git LFS 或外部存储
    - Streamlit Cloud 提供免费的 CPU 资源，GPU 推理可能较慢
    - 首次部署可能需要几分钟时间来安装依赖
+   - **重要**：如果遇到 `ImportError: libGL.so.1` 错误，确保 `packages.txt` 文件存在并包含 `libgl1-mesa-glx` 和 `libglib2.0-0`
 
 #### 本地测试 Python 3.10 兼容性：
 

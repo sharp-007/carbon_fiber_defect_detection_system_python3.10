@@ -11,6 +11,7 @@
 - [x] `app.py` - Streamlit 主应用文件
 - [x] `requirements.txt` - Python 依赖包列表
 - [x] `runtime.txt` - Python 版本指定文件（Python 3.10）
+- [x] `packages.txt` - 系统级依赖包列表（用于安装 libGL.so.1 等系统库）
 - [x] `.streamlit/config.toml` - Streamlit 配置文件（可选但推荐）
 
 ### 3. 模型文件检查
@@ -63,6 +64,21 @@ git push origin main
 - 检查 `requirements.txt` 格式是否正确
 - 确保所有依赖包都支持 Python 3.10
 - 查看部署日志中的具体错误信息
+
+### 问题 2.1：ImportError: libGL.so.1: cannot open shared object file
+**错误原因**：
+- OpenCV 在 Linux 环境中需要系统库 `libGL.so.1`
+- Streamlit Cloud 运行在 Linux 环境中，需要额外安装系统依赖
+
+**解决方案**：
+- 确保项目根目录存在 `packages.txt` 文件
+- `packages.txt` 内容应包含：
+  ```
+  libgl1-mesa-glx
+  libglib2.0-0
+  ```
+- 提交并推送到 GitHub 后，Streamlit Cloud 会自动安装这些系统依赖
+- 如果问题仍然存在，检查部署日志确认系统包是否成功安装
 
 ### 问题 3：模型文件过大
 **解决方案**：

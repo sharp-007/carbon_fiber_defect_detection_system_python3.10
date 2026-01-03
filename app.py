@@ -20,13 +20,35 @@ plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
 # OpenCV 导入（优先使用 headless 版本）
 try:
     import cv2
-except ImportError:
-    try:
-        # 如果 opencv-python-headless 未安装，尝试 opencv-python
-        import cv2
-    except ImportError:
-        st.error("❌ 错误：未安装 OpenCV。请在 requirements.txt 中确保包含 opencv-python-headless>=4.5.0")
-        st.stop()
+except (ImportError, OSError) as e:
+    error_msg = str(e)
+    if "libGL.so.1" in error_msg or "libGL.so" in error_msg:
+        st.error("""
+        ❌ **OpenCV 系统库缺失错误**
+        
+        检测到缺少系统库 `libGL.so.1`，这通常发生在 Linux 环境（如 Streamlit Cloud）中。
+        
+        **解决方案：**
+        1. 确保项目根目录存在 `packages.txt` 文件，内容包含：
+           ```
+           libgl1-mesa-glx
+           libglib2.0-0
+           ```
+        2. 提交并推送到 GitHub 后，Streamlit Cloud 会自动安装这些系统依赖。
+        3. 如果问题仍然存在，请检查 Streamlit Cloud 的部署日志。
+        """)
+    else:
+        st.error(f"""
+        ❌ **OpenCV 导入错误**
+        
+        错误信息：{error_msg}
+        
+        **可能的原因：**
+        1. 未安装 OpenCV：请在 requirements.txt 中确保包含 `opencv-python-headless>=4.5.0`
+        2. 系统库缺失：在 Linux 环境中可能需要安装系统库（见上方 libGL.so.1 错误处理）
+        3. Python 版本不兼容：请确保使用 Python 3.10 或更高版本
+        """)
+    st.stop()
 
 try:
     from ultralytics import YOLO
