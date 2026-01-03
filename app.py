@@ -1,3 +1,11 @@
+import os
+# 在导入 OpenCV 之前设置环境变量，禁用 GUI 功能（适用于 headless 环境）
+os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '0'
+os.environ['OPENCV_IO_ENABLE_JASPER'] = '0'
+# 禁用 OpenCV 的 GUI 后端，强制使用 headless 模式
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+os.environ['DISPLAY'] = ''
+
 import tempfile
 import time
 import zipfile
@@ -20,6 +28,8 @@ plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
 # OpenCV 导入（优先使用 headless 版本）
 try:
     import cv2
+    # 验证 OpenCV 版本并设置 headless 模式
+    cv2.setNumThreads(0)  # 禁用多线程以避免某些系统库问题
 except (ImportError, OSError) as e:
     error_msg = str(e)
     if "libGL.so.1" in error_msg or "libGL.so" in error_msg:

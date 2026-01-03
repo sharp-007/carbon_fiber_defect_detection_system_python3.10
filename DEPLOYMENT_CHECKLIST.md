@@ -71,14 +71,31 @@ git push origin main
 - Streamlit Cloud 运行在 Linux 环境中，需要额外安装系统依赖
 
 **解决方案**：
-- 确保项目根目录存在 `packages.txt` 文件
-- `packages.txt` 内容应包含：
-  ```
-  libgl1-mesa-glx
-  libglib2.0-0
-  ```
-- 提交并推送到 GitHub 后，Streamlit Cloud 会自动安装这些系统依赖
-- 如果问题仍然存在，检查部署日志确认系统包是否成功安装
+1. **确保使用 `opencv-python-headless`**：
+   - 在 `requirements.txt` 中使用 `opencv-python-headless>=4.5.0,<5.0.0`
+   - 不要使用 `opencv-python`（它会依赖 GUI 库）
+
+2. **创建 `packages.txt` 文件**：
+   - 确保项目根目录存在 `packages.txt` 文件
+   - `packages.txt` 内容应包含：
+     ```
+     libgl1-mesa-glx
+     libglib2.0-0
+     libsm6
+     libxext6
+     libxrender1
+     libgomp1
+     ```
+   - 每行一个包名，不要有空行
+
+3. **环境变量设置**：
+   - `app.py` 中已在导入 OpenCV 之前设置了环境变量来禁用 GUI 功能
+   - 这有助于确保 OpenCV 在 headless 模式下运行
+
+4. **验证部署**：
+   - 提交并推送到 GitHub 后，Streamlit Cloud 会自动安装这些系统依赖
+   - 检查部署日志确认系统包是否成功安装
+   - 如果问题仍然存在，查看完整的错误日志
 
 ### 问题 3：模型文件过大
 **解决方案**：
