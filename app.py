@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Optional, Callable
 
-import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -17,6 +16,17 @@ matplotlib.use('Agg')  # 使用非交互式后端
 import matplotlib.pyplot as plt
 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']  # 支持中文显示
 plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+
+# OpenCV 导入（优先使用 headless 版本）
+try:
+    import cv2
+except ImportError:
+    try:
+        # 如果 opencv-python-headless 未安装，尝试 opencv-python
+        import cv2
+    except ImportError:
+        st.error("❌ 错误：未安装 OpenCV。请在 requirements.txt 中确保包含 opencv-python-headless>=4.5.0")
+        st.stop()
 
 try:
     from ultralytics import YOLO
