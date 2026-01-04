@@ -380,7 +380,6 @@ def convert_video_to_16_9(video_bytes: bytes, video_filename: Optional[str] = No
             )
             
             # 等待文件写入完成（在Streamlit Cloud上可能需要更长时间）
-            import time
             time.sleep(1.0)  # 增加等待时间，确保文件完全写入
             
             # 读取视频文件并验证
@@ -654,9 +653,9 @@ def run_inference_video(
     if process_all_frames and len(processed_frames) > 0:
         try:
             import imageio
-            # 检查是否安装了imageio-ffmpeg插件
+            # 检查是否安装了imageio-ffmpeg插件（imageio.mimsave需要它）
             try:
-                import imageio_ffmpeg
+                import imageio_ffmpeg  # noqa: F401
             except ImportError:
                 raise ImportError("需要安装imageio-ffmpeg插件: pip install imageio-ffmpeg")
 
@@ -666,27 +665,14 @@ def run_inference_video(
             # 使用原始帧率以确保视频长度一致
             video_fps = original_fps if original_fps > 0 else 30.0
             
-            # 确保视频尺寸是16的倍数（某些编码器要求）
+            # 确保视频尺寸是偶数（yuv420p要求）
             if len(rgb_frames) > 0:
                 h, w = rgb_frames[0].shape[:2]
-                # 调整到16的倍数
-                new_w = ((w + 15) // 16) * 16
-                new_h = ((h + 15) // 16) * 16
-                if new_w != w or new_h != h:
-                    # 需要调整尺寸
+                if w % 2 != 0 or h % 2 != 0:
+                    # 调整到偶数尺寸
+                    new_w = w if w % 2 == 0 else w - 1
+                    new_h = h if h % 2 == 0 else h - 1
                     rgb_frames = [cv2.resize(frame, (new_w, new_h)) for frame in rgb_frames]
-            
-            # 使用imageio创建视频，codec='libx264'确保兼容性
-            # 注意：确保视频尺寸是偶数（某些编码器要求）
-            if len(rgb_frames) > 0:
-                h, w = rgb_frames[0].shape[:2]
-                # 确保宽度和高度都是偶数
-                if w % 2 != 0:
-                    w = w - 1
-                if h % 2 != 0:
-                    h = h - 1
-                if w != rgb_frames[0].shape[1] or h != rgb_frames[0].shape[0]:
-                    rgb_frames = [cv2.resize(frame, (w, h)) for frame in rgb_frames]
             
             # 先使用imageio生成临时视频文件
             temp_video_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
@@ -700,11 +686,10 @@ def run_inference_video(
             )
             
             # 等待文件写入完成
-            import time
-            time.sleep(1.0)  # 增加等待时间，确保文件完全写入
+            time.sleep(1.0)
             
-            # 使用ffmpeg转换视频为H.264编码（参考论坛解决方案，确保浏览器兼容性）
-            # 命令格式: ffmpeg -y -i input.avi -vcodec libx264 output.mp4
+            # 使用ffmpeg转换视频为H.264编码（确保浏览器兼容性）
+            # 命令格式: ffmpeg -y -i input.mp4 -vcodec libx264 output.mp4
             try:
                 import subprocess
                 # 尝试使用imageio-ffmpeg提供的ffmpeg路径
@@ -716,8 +701,10 @@ def run_inference_video(
                     # 如果imageio-ffmpeg不可用，尝试使用系统ffmpeg
                     ffmpeg_path = 'ffmpeg'
                 
-                # 使用ffmpeg转换视频为H.264编码（完全按照用户提供的格式）
-                # 命令格式: ffmpeg -y -i input.avi -vcodec libx264 output.mp4
+                # 使用ffmpeg转换视频为H.264编码
+                # -y: 覆盖输出文件
+                # -i: 输入文件
+                # -vcodec libx264: 使用H.264编码（浏览器兼容）
                 ffmpeg_cmd = [
                     ffmpeg_path,
                     '-y',  # 覆盖输出文件
@@ -744,7 +731,7 @@ def run_inference_video(
                     else:
                         processed_video_bytes = None
                 else:
-                    # ffmpeg转换失败，尝试使用imageio生成的原始文件
+                    # ffmpeg转换失败，使用imageio生成的原始文件
                     if Path(temp_video_path).exists() and Path(temp_video_path).stat().st_size > 0:
                         with open(temp_video_path, 'rb') as f:
                             processed_video_bytes = f.read()
@@ -770,100 +757,8 @@ def run_inference_video(
             except Exception:
                 pass
         except ImportError:
-            # 如果imageio不可用，回退到OpenCV方法，然后使用ffmpeg转换为H.264编码
-            try:
-                # 先使用OpenCV写入临时AVI文件（MJPEG编解码器更兼容）
-                temp_avi_path = tempfile.NamedTemporaryFile(suffix=".avi", delete=False).name
-                fourcc = cv2.VideoWriter_fourcc(*'MJPG')  # 使用MJPEG编解码器，更兼容
-                # 使用原始帧率以确保视频长度一致
-                video_fps = original_fps if original_fps > 0 else 30.0
-                video_writer = cv2.VideoWriter(
-                    temp_avi_path,
-                    fourcc,
-                    video_fps,
-                    (video_width_16_9, video_height_16_9)
-                )
-                if video_writer.isOpened():
-                    for frame in processed_frames:
-                        video_writer.write(frame)
-                    video_writer.release()
-                    # 等待视频写入完成
-                    import time
-                    time.sleep(0.5)
-                    
-                    # 使用ffmpeg转换为H.264编码的MP4（浏览器兼容）
-                    output_video_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
-                    try:
-                        import subprocess
-                        # 尝试使用imageio-ffmpeg提供的ffmpeg路径
-                        ffmpeg_path = None
-                        try:
-                            import imageio_ffmpeg
-                            ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-                        except (ImportError, Exception):
-                            # 如果imageio-ffmpeg不可用，尝试使用系统ffmpeg
-                            ffmpeg_path = 'ffmpeg'
-                        
-                        # 使用ffmpeg转换视频为H.264编码（完全按照用户提供的格式）
-                        # 命令格式: ffmpeg -y -i input.avi -vcodec libx264 output.mp4
-                        # -y: 覆盖输出文件
-                        # -i: 输入文件
-                        # -vcodec libx264: 使用H.264编码（浏览器兼容）
-                        ffmpeg_cmd = [
-                            ffmpeg_path,
-                            '-y',  # 覆盖输出文件
-                            '-i', temp_avi_path,  # 输入文件
-                            '-vcodec', 'libx264',  # 使用H.264编码
-                            output_video_path  # 输出文件
-                        ]
-                        result = subprocess.run(
-                            ffmpeg_cmd,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            timeout=300  # 5分钟超时
-                        )
-                        
-                        if result.returncode == 0 and Path(output_video_path).exists():
-                            file_size = Path(output_video_path).stat().st_size
-                            if file_size > 0:
-                                time.sleep(0.5)  # 等待文件完全写入
-                                with open(output_video_path, 'rb') as f:
-                                    processed_video_bytes = f.read()
-                            else:
-                                processed_video_bytes = None
-                        else:
-                            # ffmpeg转换失败，尝试直接使用AVI文件（可能不兼容浏览器）
-                            st.warning("⚠️ ffmpeg转换失败，尝试使用原始视频文件。如果无法播放，请安装ffmpeg。")
-                            if Path(temp_avi_path).exists() and Path(temp_avi_path).stat().st_size > 0:
-                                with open(temp_avi_path, 'rb') as f:
-                                    processed_video_bytes = f.read()
-                            else:
-                                processed_video_bytes = None
-                    except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
-                        # ffmpeg不可用或转换失败，尝试直接使用AVI文件
-                        st.warning(f"⚠️ ffmpeg转换失败: {str(e)}。如果视频无法播放，请确保已安装ffmpeg。")
-                        if Path(temp_avi_path).exists() and Path(temp_avi_path).stat().st_size > 0:
-                            with open(temp_avi_path, 'rb') as f:
-                                processed_video_bytes = f.read()
-                        else:
-                            processed_video_bytes = None
-                    
-                    # 清理临时文件
-                    try:
-                        if Path(temp_avi_path).exists():
-                            Path(temp_avi_path).unlink()
-                    except Exception:
-                        pass
-                    try:
-                        if Path(output_video_path).exists():
-                            Path(output_video_path).unlink()
-                    except Exception:
-                        pass
-                else:
-                    video_writer.release()
-                    processed_video_bytes = None
-            except Exception:
-                processed_video_bytes = None
+            # imageio是必需依赖，如果不可用应该报错而不是fallback
+            raise ImportError("需要安装imageio和imageio-ffmpeg: pip install imageio imageio-ffmpeg")
         except Exception:
             processed_video_bytes = None
 
@@ -1930,115 +1825,11 @@ def main():
 
             # 原始视频 & 检测结果视频预览（加载后立即显示，并进行 16:9 适配）
             # 使用与结果区域一致的两列布局，检测完成后右侧自动覆盖为检测视频
-            # 尝试将原始视频转换为16:9格式
+            # 将原始视频转换为16:9格式用于显示
             video_display_bytes = convert_video_to_16_9(video_bytes, video_file.name)
+            # 如果转换失败，使用原始视频（可能不是16:9，但至少可以显示）
             if video_display_bytes is None:
-                # 如果转换失败，尝试使用OpenCV直接处理（作为fallback）
-                try:
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
-                        tmp.write(video_bytes)
-                        tmp_path = tmp.name
-                    
-                    cap = cv2.VideoCapture(tmp_path)
-                    if cap.isOpened():
-                        # 读取第一帧来获取尺寸
-                        ret, first_frame = cap.read()
-                        if ret:
-                            # 将第一帧转换为16:9
-                            first_frame_16_9 = resize_to_16_9(first_frame)
-                            h_16_9, w_16_9 = first_frame_16_9.shape[:2]
-                            
-                            # 重新读取所有帧并转换为16:9
-                            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-                            
-                            frames_16_9 = []
-                            while True:
-                                ret, frame = cap.read()
-                                if not ret:
-                                    break
-                                frame_16_9 = resize_to_16_9(frame)
-                                frames_16_9.append(cv2.cvtColor(frame_16_9, cv2.COLOR_BGR2RGB))
-                            
-                            cap.release()
-                            
-                            # 使用imageio保存
-                            if len(frames_16_9) > 0:
-                                try:
-                                    import imageio
-                                    output_path = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False).name
-                                    
-                                    # 确保视频尺寸是偶数（yuv420p要求）
-                                    if len(frames_16_9) > 0:
-                                        h, w = frames_16_9[0].shape[:2]
-                                        if w % 2 != 0:
-                                            w = w - 1
-                                        if h % 2 != 0:
-                                            h = h - 1
-                                        if w != frames_16_9[0].shape[1] or h != frames_16_9[0].shape[0]:
-                                            frames_16_9 = [cv2.resize(frame, (w, h)) for frame in frames_16_9]
-                                    
-                                    imageio.mimsave(
-                                        output_path,
-                                        frames_16_9,
-                                        fps=fps,
-                                        codec='libx264',
-                                        quality=8,
-                                        pixelformat='yuv420p'
-                                    )
-                                    import time
-                                    time.sleep(1.0)  # 增加等待时间，确保文件完全写入
-                                    if Path(output_path).exists() and Path(output_path).stat().st_size > 0:
-                                        with open(output_path, 'rb') as f:
-                                            video_display_bytes = f.read()
-                                        try:
-                                            Path(output_path).unlink()
-                                        except Exception:
-                                            pass
-                                        try:
-                                            Path(tmp_path).unlink()
-                                        except Exception:
-                                            pass
-                                        # 成功转换，跳出
-                                        if video_display_bytes and len(video_display_bytes) > 100:
-                                            pass  # 成功，继续使用video_display_bytes
-                                        else:
-                                            video_display_bytes = None
-                                    else:
-                                        video_display_bytes = None
-                                        try:
-                                            Path(output_path).unlink()
-                                        except Exception:
-                                            pass
-                                except Exception:
-                                    video_display_bytes = None
-                            else:
-                                video_display_bytes = None
-                            
-                            try:
-                                Path(tmp_path).unlink()
-                            except Exception:
-                                pass
-                        else:
-                            cap.release()
-                            try:
-                                Path(tmp_path).unlink()
-                            except Exception:
-                                pass
-                            video_display_bytes = None
-                    else:
-                        video_display_bytes = None
-                        try:
-                            Path(tmp_path).unlink()
-                        except Exception:
-                            pass
-                except Exception:
-                    video_display_bytes = None
-                
-                # 如果所有转换都失败，使用原始视频（但可能不是16:9）
-                if video_display_bytes is None:
-                    video_display_bytes = video_bytes
+                video_display_bytes = video_bytes
             
             # 如果已经有检测结果，则从 session_state 中取出检测视频字节
             processed_video_bytes_preview = None
@@ -2048,23 +1839,9 @@ def main():
             ):
                 result = st.session_state.video_detection_results[video_file_key]
                 processed_video_bytes_preview = result.get("processed_video_bytes")
-                # 验证视频字节是否有效
-                if processed_video_bytes_preview is not None:
-                    # 检查视频字节长度
-                    if len(processed_video_bytes_preview) == 0:
-                        processed_video_bytes_preview = None
-                    # 检查是否是有效的视频数据（至少应该有一些数据）
-                    elif len(processed_video_bytes_preview) < 100:
-                        # 视频数据太小，可能无效
-                        processed_video_bytes_preview = None
-                    # 验证视频文件头（MP4文件通常以ftyp开头或包含特定的字节序列）
-                    elif not (processed_video_bytes_preview[:4] == b'ftyp' or 
-                             processed_video_bytes_preview[:8] == b'\x00\x00\x00\x18ftyp' or
-                             processed_video_bytes_preview[:8] == b'\x00\x00\x00\x20ftyp' or
-                             b'ftyp' in processed_video_bytes_preview[:100]):
-                        # 不是有效的MP4文件，但为了兼容性，仍然尝试使用
-                        # 在某些情况下，视频文件可能以其他格式开头
-                        pass
+                # 验证视频字节是否有效（至少应该有一些数据）
+                if processed_video_bytes_preview is not None and len(processed_video_bytes_preview) < 100:
+                    processed_video_bytes_preview = None
 
             col_v1, col_v2 = st.columns(2)
             with col_v1:
