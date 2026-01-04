@@ -296,7 +296,7 @@ def convert_video_to_16_9(video_bytes: bytes, video_filename: Optional[str] = No
         # 检查并导入必要的库
         try:
             import imageio
-            import imageio_ffmpeg
+            import imageio_ffmpeg  # noqa: F401
         except ImportError as e:
             # 如果imageio不可用，记录错误但继续尝试其他方法
             import logging
@@ -730,14 +730,15 @@ def run_inference_video(
             except Exception:
                 pass
         except ImportError:
-            # 如果imageio不可用，回退到OpenCV方法
+            # 如果imageio不可用，回退到OpenCV方法，然后使用ffmpeg转换为H.264编码
             try:
-                output_video_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                # 先使用OpenCV写入临时AVI文件（MJPEG编解码器更兼容）
+                temp_avi_path = tempfile.NamedTemporaryFile(suffix=".avi", delete=False).name
+                fourcc = cv2.VideoWriter_fourcc(*'MJPG')  # 使用MJPEG编解码器，更兼容
                 # 使用原始帧率以确保视频长度一致
                 video_fps = original_fps if original_fps > 0 else 30.0
                 video_writer = cv2.VideoWriter(
-                    output_video_path,
+                    temp_avi_path,
                     fourcc,
                     video_fps,
                     (video_width_16_9, video_height_16_9)
@@ -748,16 +749,82 @@ def run_inference_video(
                     video_writer.release()
                     # 等待视频写入完成
                     import time
-                    time.sleep(0.2)
-                    if Path(output_video_path).exists() and Path(output_video_path).stat().st_size > 0:
-                        with open(output_video_path, 'rb') as f:
-                            processed_video_bytes = f.read()
+                    time.sleep(0.5)
+                    
+                    # 使用ffmpeg转换为H.264编码的MP4（浏览器兼容）
+                    output_video_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+                    try:
+                        import subprocess
+                        # 尝试使用imageio-ffmpeg提供的ffmpeg路径
+                        ffmpeg_path = None
+                        try:
+                            import imageio_ffmpeg
+                            ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+                        except (ImportError, Exception):
+                            # 如果imageio-ffmpeg不可用，尝试使用系统ffmpeg
+                            ffmpeg_path = 'ffmpeg'
+                        
+                        # 使用ffmpeg转换视频为H.264编码
+                        # -y: 覆盖输出文件
+                        # -i: 输入文件
+                        # -vcodec libx264: 使用H.264编码
+                        # -pix_fmt yuv420p: 像素格式，确保浏览器兼容性
+                        # -crf 23: 质量控制（18-28，值越小质量越好）
+                        ffmpeg_cmd = [
+                            ffmpeg_path,
+                            '-y',  # 覆盖输出文件
+                            '-i', temp_avi_path,  # 输入文件
+                            '-vcodec', 'libx264',  # 使用H.264编码
+                            '-pix_fmt', 'yuv420p',  # 像素格式，确保浏览器兼容性
+                            '-crf', '23',  # 质量控制
+                            output_video_path  # 输出文件
+                        ]
+                        result = subprocess.run(
+                            ffmpeg_cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            timeout=300  # 5分钟超时
+                        )
+                        
+                        if result.returncode == 0 and Path(output_video_path).exists():
+                            file_size = Path(output_video_path).stat().st_size
+                            if file_size > 0:
+                                time.sleep(0.5)  # 等待文件完全写入
+                                with open(output_video_path, 'rb') as f:
+                                    processed_video_bytes = f.read()
+                            else:
+                                processed_video_bytes = None
+                        else:
+                            # ffmpeg转换失败，尝试直接使用AVI文件（可能不兼容浏览器）
+                            st.warning("⚠️ ffmpeg转换失败，尝试使用原始视频文件。如果无法播放，请安装ffmpeg。")
+                            if Path(temp_avi_path).exists() and Path(temp_avi_path).stat().st_size > 0:
+                                with open(temp_avi_path, 'rb') as f:
+                                    processed_video_bytes = f.read()
+                            else:
+                                processed_video_bytes = None
+                    except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
+                        # ffmpeg不可用或转换失败，尝试直接使用AVI文件
+                        st.warning(f"⚠️ ffmpeg转换失败: {str(e)}。如果视频无法播放，请确保已安装ffmpeg。")
+                        if Path(temp_avi_path).exists() and Path(temp_avi_path).stat().st_size > 0:
+                            with open(temp_avi_path, 'rb') as f:
+                                processed_video_bytes = f.read()
+                        else:
+                            processed_video_bytes = None
+                    
+                    # 清理临时文件
+                    try:
+                        if Path(temp_avi_path).exists():
+                            Path(temp_avi_path).unlink()
+                    except Exception:
+                        pass
+                    try:
+                        if Path(output_video_path).exists():
+                            Path(output_video_path).unlink()
+                    except Exception:
+                        pass
                 else:
                     video_writer.release()
-                try:
-                    Path(output_video_path).unlink()
-                except Exception:
-                    pass
+                    processed_video_bytes = None
             except Exception:
                 processed_video_bytes = None
         except Exception:
