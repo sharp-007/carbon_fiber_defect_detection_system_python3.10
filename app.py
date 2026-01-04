@@ -2069,25 +2069,79 @@ def main():
             col_v1, col_v2 = st.columns(2)
             with col_v1:
                 st.markdown("##### 🎞️ 原始视频")
-                # 使用format参数确保视频正确显示
+                # 尝试显示视频，如果失败则显示提示
+                video_display_success = False
                 try:
                     st.video(video_display_bytes, format="video/mp4")
+                    video_display_success = True
                 except Exception:
-                    # 如果指定format失败，尝试不指定format
-                    st.video(video_display_bytes)
+                    try:
+                        st.video(video_display_bytes)
+                        video_display_success = True
+                    except Exception:
+                        video_display_success = False
+                
+                if not video_display_success:
+                    st.warning("⚠️ 视频无法在浏览器中播放，请下载后使用本地播放器查看")
+                    st.download_button(
+                        label="📥 下载原始视频",
+                        data=video_display_bytes,
+                        file_name=video_file.name,
+                        mime="video/mp4",
+                        key="download_original_video"
+                    )
+            
             with col_v2:
                 st.markdown("##### ✅ 检测结果视频")
                 if processed_video_bytes_preview and len(processed_video_bytes_preview) > 0:
+                    # 尝试显示视频
+                    result_video_display_success = False
                     try:
                         st.video(processed_video_bytes_preview, format="video/mp4")
+                        result_video_display_success = True
                     except Exception:
-                        # 如果指定format失败，尝试不指定format
-                        st.video(processed_video_bytes_preview)
+                        try:
+                            st.video(processed_video_bytes_preview)
+                            result_video_display_success = True
+                        except Exception:
+                            result_video_display_success = False
+                    
+                    # 如果视频无法播放，显示关键帧序列作为备选方案
+                    if not result_video_display_success:
+                        st.warning("⚠️ 视频无法在浏览器中播放")
+                        # 从检测结果中获取关键帧
+                        if (
+                            "video_detection_results" in st.session_state
+                            and video_file_key in st.session_state.video_detection_results
+                        ):
+                            result = st.session_state.video_detection_results[video_file_key]
+                            preview_frames = result.get('frames', [])
+                            if preview_frames and len(preview_frames) > 0:
+                                # 使用可展开的容器显示关键帧预览
+                                with st.expander(f"📸 查看关键帧预览（共 {len(preview_frames)} 帧）", expanded=False):
+                                    display_frames = preview_frames[:12]  # 最多显示12帧
+                                    # 使用3列布局显示关键帧，更紧凑
+                                    cols_per_row = 3
+                                    for i in range(0, len(display_frames), cols_per_row):
+                                        cols = st.columns(cols_per_row)
+                                        for j, col in enumerate(cols):
+                                            if i + j < len(display_frames):
+                                                with col:
+                                                    st.image(display_frames[i + j], use_container_width=True, caption=f"帧 {i + j + 1}")
+                                    if len(preview_frames) > 12:
+                                        st.caption("* 仅显示前12帧，完整视频请下载查看")
+                            else:
+                                st.info("💡 提示：视频文件已生成，请下载后使用本地播放器查看")
+                        else:
+                            st.info("💡 提示：视频文件已生成，请下载后使用本地播放器查看")
+                    
+                    # 始终提供下载按钮
                     st.download_button(
                         label="📥 下载检测结果视频",
                         data=processed_video_bytes_preview,
                         file_name=f"video_detected_{video_file.name.rsplit('.', 1)[0]}.mp4",
                         mime="video/mp4",
+                        key="download_result_video"
                     )
                 else:
                     st.info("检测完成后将在此显示检测结果视频")
