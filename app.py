@@ -688,8 +688,10 @@ def run_inference_video(
                 if w != rgb_frames[0].shape[1] or h != rgb_frames[0].shape[0]:
                     rgb_frames = [cv2.resize(frame, (w, h)) for frame in rgb_frames]
             
+            # 先使用imageio生成临时视频文件
+            temp_video_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
             imageio.mimsave(
-                output_video_path,
+                temp_video_path,
                 rgb_frames,
                 fps=video_fps,
                 codec='libx264',
@@ -697,33 +699,71 @@ def run_inference_video(
                 pixelformat='yuv420p'  # 确保浏览器兼容性，yuv420p要求宽度和高度都是偶数
             )
             
-            # 等待文件写入完成（在Streamlit Cloud上可能需要更长时间）
+            # 等待文件写入完成
             import time
             time.sleep(1.0)  # 增加等待时间，确保文件完全写入
             
-            # 读取视频文件并验证
-            if Path(output_video_path).exists():
-                file_size = Path(output_video_path).stat().st_size
-                if file_size > 0:
-                    with open(output_video_path, 'rb') as f:
-                        processed_video_bytes = f.read()
-                    # 验证视频字节是否有效（至少应该有一些数据）
-                    # 注意：即使是小视频也可能小于1KB，所以降低阈值
-                    if len(processed_video_bytes) < 100:  # 如果小于100字节，可能有问题
+            # 使用ffmpeg转换视频为H.264编码（参考论坛解决方案，确保浏览器兼容性）
+            # 命令格式: ffmpeg -y -i input.avi -vcodec libx264 output.mp4
+            try:
+                import subprocess
+                # 尝试使用imageio-ffmpeg提供的ffmpeg路径
+                ffmpeg_path = None
+                try:
+                    import imageio_ffmpeg
+                    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+                except (ImportError, Exception):
+                    # 如果imageio-ffmpeg不可用，尝试使用系统ffmpeg
+                    ffmpeg_path = 'ffmpeg'
+                
+                # 使用ffmpeg转换视频为H.264编码（完全按照用户提供的格式）
+                # 命令格式: ffmpeg -y -i input.avi -vcodec libx264 output.mp4
+                ffmpeg_cmd = [
+                    ffmpeg_path,
+                    '-y',  # 覆盖输出文件
+                    '-i', temp_video_path,  # 输入文件
+                    '-vcodec', 'libx264',  # 使用H.264编码
+                    output_video_path  # 输出文件
+                ]
+                result = subprocess.run(
+                    ffmpeg_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=300  # 5分钟超时
+                )
+                
+                if result.returncode == 0 and Path(output_video_path).exists():
+                    file_size = Path(output_video_path).stat().st_size
+                    if file_size > 0:
+                        time.sleep(0.5)  # 等待文件完全写入
+                        with open(output_video_path, 'rb') as f:
+                            processed_video_bytes = f.read()
+                        # 验证视频字节是否有效
+                        if len(processed_video_bytes) < 100:
+                            processed_video_bytes = None
+                    else:
                         processed_video_bytes = None
-                    # 验证视频文件头，确保是有效的MP4文件
-                    # MP4文件通常以ftyp box开头，但前面可能有4字节的大小字段
-                    # 为了兼容性，我们检查是否包含ftyp（可能在文件开头或稍后位置）
-                    elif b'ftyp' not in processed_video_bytes[:100]:
-                        # 不是标准的MP4文件，但为了兼容性，仍然尝试使用
-                        # 某些编码器可能产生不同的文件头格式
-                        pass
+                else:
+                    # ffmpeg转换失败，尝试使用imageio生成的原始文件
+                    if Path(temp_video_path).exists() and Path(temp_video_path).stat().st_size > 0:
+                        with open(temp_video_path, 'rb') as f:
+                            processed_video_bytes = f.read()
+                    else:
+                        processed_video_bytes = None
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                # ffmpeg不可用或转换失败，使用imageio生成的原始文件
+                if Path(temp_video_path).exists() and Path(temp_video_path).stat().st_size > 0:
+                    with open(temp_video_path, 'rb') as f:
+                        processed_video_bytes = f.read()
                 else:
                     processed_video_bytes = None
-            else:
-                processed_video_bytes = None
             
             # 清理临时文件
+            try:
+                if Path(temp_video_path).exists():
+                    Path(temp_video_path).unlink()
+            except Exception:
+                pass
             try:
                 if Path(output_video_path).exists():
                     Path(output_video_path).unlink()
@@ -764,19 +804,16 @@ def run_inference_video(
                             # 如果imageio-ffmpeg不可用，尝试使用系统ffmpeg
                             ffmpeg_path = 'ffmpeg'
                         
-                        # 使用ffmpeg转换视频为H.264编码
+                        # 使用ffmpeg转换视频为H.264编码（完全按照用户提供的格式）
+                        # 命令格式: ffmpeg -y -i input.avi -vcodec libx264 output.mp4
                         # -y: 覆盖输出文件
                         # -i: 输入文件
-                        # -vcodec libx264: 使用H.264编码
-                        # -pix_fmt yuv420p: 像素格式，确保浏览器兼容性
-                        # -crf 23: 质量控制（18-28，值越小质量越好）
+                        # -vcodec libx264: 使用H.264编码（浏览器兼容）
                         ffmpeg_cmd = [
                             ffmpeg_path,
                             '-y',  # 覆盖输出文件
                             '-i', temp_avi_path,  # 输入文件
                             '-vcodec', 'libx264',  # 使用H.264编码
-                            '-pix_fmt', 'yuv420p',  # 像素格式，确保浏览器兼容性
-                            '-crf', '23',  # 质量控制
                             output_video_path  # 输出文件
                         ]
                         result = subprocess.run(
