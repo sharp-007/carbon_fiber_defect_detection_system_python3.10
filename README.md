@@ -231,6 +231,7 @@ python train.py
 **常见问题排查：**
 
 如果 `best.pt` 没有生成，请检查：
+
 1. **训练是否完成**：确保训练至少完成了 1 个完整的 epoch
 2. **验证集是否正常**：检查 `dataset/valid/` 目录是否存在且包含图片和标签
 3. **训练是否被中断**：如果训练过程中按 `Ctrl+C` 中断，可能只有 `last.pt`
@@ -328,23 +329,24 @@ python test.py --model runs/run3/train/weights/best.pt --conf 0.35 --iou 0.65
 **命令行参数：**
 
 - `--model`：模型文件路径（可选）
+
   - 如果指定，直接使用该路径
   - 如果未指定，自动查找模型（见 `--model-type` 说明）
   - 示例：`--model runs/run3/train/weights/best.pt`
-
 - `--model-type`：模型类型选择（仅在未指定 `--model` 时有效）
+
   - `best`：使用最佳模型（验证集上 mAP 最高的模型，默认值）
   - `last`：使用最后一个 epoch 的模型
   - 查找顺序：`runs/run{N}/train/weights/{model_type}.pt` → `model/{model_type}.pt`
   - 示例：`--model-type last`
-
 - `--conf`：置信度阈值（默认：0.15）
+
   - 范围：0.0-1.0
   - 值越高，检测越严格（可能漏检）
   - 值越低，检测越宽松（可能误检）
   - 示例：`--conf 0.3`
-
 - `--iou`：IoU 阈值，用于 NMS（默认：0.25）
+
   - 范围：0.0-1.0
   - 值越高，重叠框保留越多
   - 值越低，重叠框过滤越严格
@@ -971,6 +973,7 @@ results3 = model3("image.jpg")
 ### 8. 依赖说明
 
 **Python 版本要求**：
+
 - **最低版本**：Python 3.10（Streamlit Cloud 部署要求）
 - **推荐版本**：Python 3.10 或更高版本
 - 项目最初在 Python 3.9 环境下开发，现已完全兼容 Python 3.10+
@@ -1000,21 +1003,22 @@ results3 = model3("image.jpg")
 #### 部署步骤：
 
 1. **将项目推送到 GitHub**：
+
    ```bash
    git add .
    git commit -m "升级到 Python 3.10，支持 Streamlit Cloud 部署"
    git push origin main
    ```
-
 2. **在 Streamlit Cloud 上部署**：
+
    - 访问 [Streamlit Cloud](https://streamlit.io/cloud)
    - 使用 GitHub 账号登录
    - 点击 "New app"
    - 选择你的 GitHub 仓库
    - 设置主文件路径为 `app.py`
    - Streamlit Cloud 会自动检测 `runtime.txt` 并使用 Python 3.10
-
 3. **部署注意事项**：
+
    - 确保 `model/` 目录中的模型文件（如 `best.pt`、`yolo11n.pt`）已提交到仓库
    - 如果模型文件过大，可以考虑使用 Git LFS 或外部存储
    - Streamlit Cloud 提供免费的 CPU 资源，GPU 推理可能较慢
@@ -1054,7 +1058,7 @@ streamlit run app.py
 
 - **项目作者**：Joyce Pan
 - **联系邮箱**：[panjiao007@126.com](mailto:panjiao007@126.com)
-- **Github**：[sharp-007/carbon_fiber_defect_detection_system](https://github.com/sharp-007/carbon_fiber_defect_detection_system)
+- **Github**：[sharp-007/carbon_fiber_defect_detection_system_pyhton3.10](https://github.com/sharp-007/carbon_fiber_defect_detection_system_pyhton3.10)
 - **在线演示**：[https://carbon-fiber-defect-detection-system.streamlit.app/](https://carbon-fiber-defect-detection-system.streamlit.app/)
 - **版本控制**：使用 Git 进行版本管理
 
