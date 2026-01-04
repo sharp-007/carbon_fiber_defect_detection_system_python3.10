@@ -280,7 +280,21 @@ def convert_video_to_16_9(video_bytes: bytes, video_filename: Optional[str] = No
     Returns:
         16:9格式的视频字节数据，失败则返回None
     """
+    tmp_path = None
+    output_video_path = None
+    cap = None
+    
     try:
+        # 检查并导入必要的库
+        try:
+            import imageio
+            import imageio_ffmpeg
+        except ImportError as e:
+            # 如果imageio不可用，记录错误但继续尝试其他方法
+            import logging
+            logging.warning(f"imageio或imageio-ffmpeg未安装: {e}")
+            return None
+        
         # 从文件名中提取扩展名，支持多种视频格式
         supported_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.flv']
         if video_filename:
@@ -306,6 +320,10 @@ def convert_video_to_16_9(video_bytes: bytes, video_filename: Optional[str] = No
         video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
+        # 检查视频尺寸是否有效
+        if video_width <= 0 or video_height <= 0:
+            return None
+        
         # 计算16:9尺寸
         sample_frame_bgr = np.zeros((video_height, video_width, 3), dtype=np.uint8)
         sample_frame_16_9 = resize_to_16_9(sample_frame_bgr)
@@ -313,64 +331,76 @@ def convert_video_to_16_9(video_bytes: bytes, video_filename: Optional[str] = No
         
         # 生成16:9视频
         output_video_path = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
-        try:
-            import imageio
-            import imageio_ffmpeg
-            
-            frames_16_9 = []
-            while True:
-                ret, frame_bgr = cap.read()
-                if not ret:
-                    break
-                frame_16_9 = resize_to_16_9(frame_bgr)
-                frames_16_9.append(cv2.cvtColor(frame_16_9, cv2.COLOR_BGR2RGB))
-            
+        
+        frames_16_9 = []
+        frame_count = 0
+        max_frames = 10000  # 限制最大帧数，避免内存问题
+        
+        while frame_count < max_frames:
+            ret, frame_bgr = cap.read()
+            if not ret:
+                break
+            frame_16_9 = resize_to_16_9(frame_bgr)
+            frames_16_9.append(cv2.cvtColor(frame_16_9, cv2.COLOR_BGR2RGB))
+            frame_count += 1
+        
+        if cap:
             cap.release()
+            cap = None
+        
+        if len(frames_16_9) > 0:
+            # 确保fps有效
+            fps = original_fps if original_fps > 0 else 30.0
             
-            if len(frames_16_9) > 0:
-                imageio.mimsave(
-                    output_video_path,
-                    frames_16_9,
-                    fps=original_fps if original_fps > 0 else 30.0,
-                    codec='libx264',
-                    quality=8,
-                    pixelformat='yuv420p'
-                )
-                
-                # 读取视频文件
-                if Path(output_video_path).exists() and Path(output_video_path).stat().st_size > 0:
+            # 使用imageio创建视频，确保浏览器兼容性
+            imageio.mimsave(
+                output_video_path,
+                frames_16_9,
+                fps=fps,
+                codec='libx264',
+                quality=8,
+                pixelformat='yuv420p',
+                macro_block_size=1  # 确保尺寸是16的倍数，提高兼容性
+            )
+            
+            # 等待文件写入完成
+            import time
+            time.sleep(0.5)
+            
+            # 读取视频文件并验证
+            if Path(output_video_path).exists():
+                file_size = Path(output_video_path).stat().st_size
+                if file_size > 0:
                     with open(output_video_path, 'rb') as f:
                         output_video_bytes = f.read()
-                    try:
-                        Path(output_video_path).unlink()
-                        Path(tmp_path).unlink()
-                    except:
-                        pass
-                    return output_video_bytes
-        except ImportError:
-            # 如果imageio不可用，返回None
-            cap.release()
+                    
+                    # 验证视频字节是否有效（至少应该有一些数据）
+                    if len(output_video_bytes) > 1000:  # 至少1KB
+                        return output_video_bytes
+        
+        return None
+        
+    except Exception as e:
+        import logging
+        logging.error(f"convert_video_to_16_9错误: {e}")
+        return None
+    finally:
+        # 清理资源
+        if cap:
+            try:
+                cap.release()
+            except Exception:
+                pass
+        if tmp_path and Path(tmp_path).exists():
             try:
                 Path(tmp_path).unlink()
-            except:
+            except Exception:
                 pass
-            return None
-        except Exception:
-            cap.release()
+        if output_video_path and Path(output_video_path).exists():
             try:
                 Path(output_video_path).unlink()
-                Path(tmp_path).unlink()
-            except:
+            except Exception:
                 pass
-            return None
-        
-        try:
-            Path(tmp_path).unlink()
-        except:
-            pass
-        return None
-    except Exception:
-        return None
 
 
 def run_inference_video(
@@ -619,6 +649,17 @@ def run_inference_video(
             rgb_frames = [cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in processed_frames]
             # 使用原始帧率以确保视频长度一致
             video_fps = original_fps if original_fps > 0 else 30.0
+            
+            # 确保视频尺寸是16的倍数（某些编码器要求）
+            if len(rgb_frames) > 0:
+                h, w = rgb_frames[0].shape[:2]
+                # 调整到16的倍数
+                new_w = ((w + 15) // 16) * 16
+                new_h = ((h + 15) // 16) * 16
+                if new_w != w or new_h != h:
+                    # 需要调整尺寸
+                    rgb_frames = [cv2.resize(frame, (new_w, new_h)) for frame in rgb_frames]
+            
             # 使用imageio创建视频，codec='libx264'确保兼容性
             imageio.mimsave(
                 output_video_path,
@@ -626,15 +667,32 @@ def run_inference_video(
                 fps=video_fps,
                 codec='libx264',
                 quality=8,
-                pixelformat='yuv420p'  # 确保浏览器兼容性
+                pixelformat='yuv420p',  # 确保浏览器兼容性
+                macro_block_size=1  # 确保尺寸是16的倍数，提高兼容性
             )
-            # 读取视频文件
-            if Path(output_video_path).exists() and Path(output_video_path).stat().st_size > 0:
-                with open(output_video_path, 'rb') as f:
-                    processed_video_bytes = f.read()
+            
+            # 等待文件写入完成
+            import time
+            time.sleep(0.5)
+            
+            # 读取视频文件并验证
+            if Path(output_video_path).exists():
+                file_size = Path(output_video_path).stat().st_size
+                if file_size > 0:
+                    with open(output_video_path, 'rb') as f:
+                        processed_video_bytes = f.read()
+                    # 验证视频字节是否有效（至少应该有一些数据）
+                    if len(processed_video_bytes) < 1000:  # 如果小于1KB，可能有问题
+                        processed_video_bytes = None
+                else:
+                    processed_video_bytes = None
+            else:
+                processed_video_bytes = None
+            
             # 清理临时文件
             try:
-                Path(output_video_path).unlink()
+                if Path(output_video_path).exists():
+                    Path(output_video_path).unlink()
             except Exception:
                 pass
         except ImportError:
@@ -1734,7 +1792,12 @@ def main():
 
             # 原始视频 & 检测结果视频预览（加载后立即显示，并进行 16:9 适配）
             # 使用与结果区域一致的两列布局，检测完成后右侧自动覆盖为检测视频
-            video_display_bytes = convert_video_to_16_9(video_bytes, video_file.name) or video_bytes
+            # 尝试将原始视频转换为16:9格式
+            video_display_bytes = convert_video_to_16_9(video_bytes, video_file.name)
+            if video_display_bytes is None:
+                # 如果转换失败，使用原始视频（但可能不是16:9）
+                video_display_bytes = video_bytes
+            
             # 如果已经有检测结果，则从 session_state 中取出检测视频字节
             processed_video_bytes_preview = None
             if (
@@ -1751,11 +1814,20 @@ def main():
             col_v1, col_v2 = st.columns(2)
             with col_v1:
                 st.markdown("##### 🎞️ 原始视频")
-                st.video(video_display_bytes)
+                # 使用format参数确保视频正确显示
+                try:
+                    st.video(video_display_bytes, format="video/mp4")
+                except Exception:
+                    # 如果指定format失败，尝试不指定format
+                    st.video(video_display_bytes)
             with col_v2:
                 st.markdown("##### ✅ 检测结果视频")
                 if processed_video_bytes_preview and len(processed_video_bytes_preview) > 0:
-                    st.video(processed_video_bytes_preview)
+                    try:
+                        st.video(processed_video_bytes_preview, format="video/mp4")
+                    except Exception:
+                        # 如果指定format失败，尝试不指定format
+                        st.video(processed_video_bytes_preview)
                     st.download_button(
                         label="📥 下载检测结果视频",
                         data=processed_video_bytes_preview,

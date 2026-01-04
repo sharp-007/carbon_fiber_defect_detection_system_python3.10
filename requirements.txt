@@ -13,6 +13,10 @@ pandas>=1.5.0
 opencv-python-headless>=4.5.0,<5.0.0
 Pillow>=9.0.0
 
+# 视频处理库（用于视频格式转换和16:9处理）
+imageio>=2.25.0
+imageio-ffmpeg>=0.4.8
+
 # YOLO 模型库（核心依赖）
 # Ultralytics 是一个现代化的 YOLO 实现，支持 YOLOv5/v8/v9/v10/v11 等版本
 # 提供完整的训练、验证、推理和导出功能
