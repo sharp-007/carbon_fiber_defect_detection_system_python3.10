@@ -254,6 +254,16 @@ python train.py
 python test.py
 ```
 
+**选择模型类型（best 或 last）：**
+
+```bash
+# 使用最新的 best.pt（默认）
+python test.py --model-type best
+
+# 使用最新的 last.pt
+python test.py --model-type last
+```
+
 **指定模型路径：**
 
 ```bash
@@ -266,10 +276,14 @@ python test.py --model runs/run1/train/weights/best.pt
 python test.py --conf 0.3 --iou 0.5
 ```
 
-**完整参数示例：**
+**组合使用所有参数：**
 
 ```bash
-python test.py --model model/best.pt --conf 0.25 --iou 0.7
+# 使用 last.pt，并自定义阈值
+python test.py --model-type last --conf 0.3 --iou 0.5
+
+# 指定模型路径，并自定义阈值
+python test.py --model runs/run3/train/weights/best.pt --conf 0.35 --iou 0.65
 ```
 
 #### 测试流程
@@ -311,17 +325,81 @@ python test.py --model model/best.pt --conf 0.25 --iou 0.7
 
 #### 测试参数说明
 
-- **模型路径**：可通过 `--model` 参数指定，默认自动查找最新的 `best.pt`
-- **置信度阈值**：`--conf` 参数，默认 0.25（用于过滤低置信度检测框）
-- **IoU 阈值**：`--iou` 参数，默认 0.7（用于 NMS 非极大值抑制）
-- **设备**：自动检测（优先使用 GPU）
+**命令行参数：**
+
+- `--model`：模型文件路径（可选）
+  - 如果指定，直接使用该路径
+  - 如果未指定，自动查找模型（见 `--model-type` 说明）
+  - 示例：`--model runs/run3/train/weights/best.pt`
+
+- `--model-type`：模型类型选择（仅在未指定 `--model` 时有效）
+  - `best`：使用最佳模型（验证集上 mAP 最高的模型，默认值）
+  - `last`：使用最后一个 epoch 的模型
+  - 查找顺序：`runs/run{N}/train/weights/{model_type}.pt` → `model/{model_type}.pt`
+  - 示例：`--model-type last`
+
+- `--conf`：置信度阈值（默认：0.15）
+  - 范围：0.0-1.0
+  - 值越高，检测越严格（可能漏检）
+  - 值越低，检测越宽松（可能误检）
+  - 示例：`--conf 0.3`
+
+- `--iou`：IoU 阈值，用于 NMS（默认：0.25）
+  - 范围：0.0-1.0
+  - 值越高，重叠框保留越多
+  - 值越低，重叠框过滤越严格
+  - 示例：`--iou 0.5`
+
+**其他配置：**
+
+- **设备**：自动检测（优先使用 GPU，如果可用）
+- **批次大小**：自动调整（GPU: 16, CPU: 4）
+- **图像尺寸**：640×640
 
 #### 测试注意事项
 
-- 测试集用于最终评估模型性能，不应参与训练过程
-- 测试结果可以用于对比不同训练轮数或超参数设置的效果
-- 测试脚本会自动查找最新的训练模型，也可以手动指定模型路径
-- 测试前请确保已完成模型训练，或手动指定模型路径
+- **测试集用途**：测试集用于最终评估模型性能，不应参与训练过程
+- **模型选择**：
+  - `best.pt`：验证集上表现最好的模型（推荐用于最终测试）
+  - `last.pt`：最后一个 epoch 的模型（可能性能不如 best.pt）
+- **阈值调整**：
+  - 可以根据实际需求调整置信度和 IoU 阈值
+  - 建议先用默认值测试，再根据结果调整
+- **结果对比**：测试结果可以用于对比不同训练轮数、超参数设置或模型版本的效果
+- **自动查找**：测试脚本会自动查找最新的训练模型，也可以手动指定模型路径
+- **测试前准备**：测试前请确保已完成模型训练，或手动指定模型路径
+
+#### 使用示例
+
+**示例 1：快速测试（使用默认参数）**
+
+```bash
+python test.py
+```
+
+**示例 2：测试 last.pt 模型**
+
+```bash
+python test.py --model-type last
+```
+
+**示例 3：更严格的检测（高置信度，低 IoU）**
+
+```bash
+python test.py --conf 0.5 --iou 0.4
+```
+
+**示例 4：更宽松的检测（低置信度，高 IoU）**
+
+```bash
+python test.py --conf 0.15 --iou 0.8
+```
+
+**示例 5：测试特定训练轮次的模型**
+
+```bash
+python test.py --model runs/run2/train/weights/best.pt --conf 0.3 --iou 0.6
+```
 
 ### 6. 项目结构
 

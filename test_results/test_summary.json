@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-01-04 16:49:03",
+  "model_path": "E:\\AI\\AI经典实践项目\\Github\\目标检测\\carbon_fiber_defect_detection_system_pyhton3.10\\runs\\run3\\train\\weights\\last.pt",
+  "dataset": "test (测试集)",
+  "conf_threshold": 0.15,
+  "iou_threshold": 0.25,
+  "overall_metrics": {
+    "map50": 0.3872399999999999,
+    "map50_95": 0.12951366666666664,
+    "precision": 0.9208437017154896,
+    "recall": 0.2857142857142857,
+    "f1_score": 0.43611364431906813
+  },
+  "per_class_metrics": {
+    "carbon-fibre-defect": {
+      "map50_95": 0.12951366666666664,
+      "precision": 0.9208437017154896,
+      "recall": 0.2857142857142857,
+      "f1_score": 0.43611364431906813
+    }
+  }
+}

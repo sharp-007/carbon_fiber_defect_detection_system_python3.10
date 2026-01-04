@@ -186,7 +186,8 @@ def visualize_test_results(
     class_names: List[str],
     output_dir: Path,
     device: str = "cpu",
-    conf_threshold: float = 0.25,
+    conf_threshold: float = 0.15,
+    iou_threshold: float = 0.25,
 ):
     """
     生成测试集的预测和真实标签对比可视化图片
@@ -199,6 +200,7 @@ def visualize_test_results(
         output_dir: 输出目录
         device: 设备 ('cpu' 或 'cuda')
         conf_threshold: 置信度阈值
+        iou_threshold: IoU阈值，用于NMS
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -222,6 +224,7 @@ def visualize_test_results(
         results = model.predict(
             source=img,
             conf=conf_threshold,
+            iou=iou_threshold,
             device=device,
             verbose=False,
         )
@@ -265,12 +268,13 @@ def visualize_test_results(
     print("  - 红色框: 预测结果 (Prediction)")
 
 
-def test_model(model_path: str = None, conf_threshold: float = 0.25, iou_threshold: float = 0.7):
+def test_model(model_path: str = None, model_type: str = "best", conf_threshold: float = 0.15, iou_threshold: float = 0.25):
     """
     在测试集上评估模型
     
     Args:
-        model_path: 模型文件路径，如果为None则自动查找最新的best.pt
+        model_path: 模型文件路径，如果为None则自动查找最新的模型
+        model_type: 模型类型，'best' 或 'last'（仅在model_path为None时有效）
         conf_threshold: 置信度阈值
         iou_threshold: IoU阈值，用于NMS
     """
@@ -296,9 +300,10 @@ def test_model(model_path: str = None, conf_threshold: float = 0.25, iou_thresho
     
     # 确定模型路径
     if model_path is None:
-        # 自动查找最新的best.pt模型
+        # 自动查找最新的模型（best.pt 或 last.pt）
         runs_dir = project_root / "runs"
-        best_model_path = None
+        model_filename = f"{model_type}.pt"  # best.pt 或 last.pt
+        found_model_path = None
         
         if runs_dir.exists():
             # 查找所有run文件夹
@@ -307,27 +312,29 @@ def test_model(model_path: str = None, conf_threshold: float = 0.25, iou_thresho
                 if item.is_dir() and item.name.startswith("run") and item.name[3:].isdigit():
                     try:
                         run_num = int(item.name[3:])
-                        model_file = item / "train" / "weights" / "best.pt"
+                        model_file = item / "train" / "weights" / model_filename
                         if model_file.exists():
                             run_dirs.append((run_num, model_file))
                     except ValueError:
                         pass
             
             if run_dirs:
-                # 使用最新的run文件夹中的best.pt
+                # 使用最新的run文件夹中的模型
                 run_dirs.sort(key=lambda x: x[0], reverse=True)
-                best_model_path = run_dirs[0][1]
-                print(f"自动找到模型: {best_model_path}")
+                found_model_path = run_dirs[0][1]
+                print(f"自动找到模型 ({model_type}.pt): {found_model_path}")
             else:
-                # 尝试使用model目录下的best.pt
-                best_model_path = project_root / "model" / "best.pt"
-                if not best_model_path.exists():
-                    raise FileNotFoundError("未找到训练好的模型，请先训练模型或指定模型路径")
+                # 尝试使用model目录下的模型
+                found_model_path = project_root / "model" / model_filename
+                if not found_model_path.exists():
+                    raise FileNotFoundError(f"未找到训练好的模型 ({model_filename})，请先训练模型或指定模型路径")
         else:
-            # 尝试使用model目录下的best.pt
-            best_model_path = project_root / "model" / "best.pt"
-            if not best_model_path.exists():
-                raise FileNotFoundError("未找到训练好的模型，请先训练模型或指定模型路径")
+            # 尝试使用model目录下的模型
+            found_model_path = project_root / "model" / model_filename
+            if not found_model_path.exists():
+                raise FileNotFoundError(f"未找到训练好的模型 ({model_filename})，请先训练模型或指定模型路径")
+        
+        best_model_path = found_model_path
     else:
         best_model_path = Path(model_path)
         if not best_model_path.exists():
@@ -358,13 +365,18 @@ def test_model(model_path: str = None, conf_threshold: float = 0.25, iou_thresho
     # 创建临时的测试集配置文件
     test_data_yaml = test_output_dir / "test_data.yaml"
     test_data_config = data_config.copy()
-    # 将val路径替换为test路径
-    if 'val' in test_data_config:
-        original_val = test_data_config['val']
-        # 替换valid为test
-        test_data_config['val'] = original_val.replace('valid', 'test')
-    else:
-        test_data_config['val'] = 'test/images'
+    
+    # 确定测试集路径（使用绝对路径，相对于项目根目录）
+    dataset_dir = data_yaml.parent  # dataset 目录
+    test_images_dir = dataset_dir / "test" / "images"
+    
+    # 将val路径替换为test路径（使用绝对路径）
+    test_data_config['val'] = str(test_images_dir.resolve())
+    
+    # 同时更新 train 路径为绝对路径（如果需要）
+    if 'train' in test_data_config:
+        train_images_dir = dataset_dir / "train" / "images"
+        test_data_config['train'] = str(train_images_dir.resolve())
     
     # 保存临时配置文件
     with open(test_data_yaml, 'w', encoding='utf-8') as f:
@@ -380,8 +392,8 @@ def test_model(model_path: str = None, conf_threshold: float = 0.25, iou_thresho
         verbose=False,
         plots=True,  # 生成测试图表（包含混淆矩阵、PR曲线等评估指标）
         save=False,  # 不保存测试批次图片（精简输出）
-        project=str(test_output_dir.parent),  # 测试结果保存目录
-        name="test_results",  # 测试结果文件夹名称
+        project=str(test_output_dir),  # 测试结果保存目录（直接使用已创建的test_results目录）
+        name="",  # 空名称，结果直接保存在project目录下
     )
     
     # 输出测试结果摘要
@@ -497,6 +509,7 @@ def test_model(model_path: str = None, conf_threshold: float = 0.25, iou_thresho
             output_dir=vis_output_dir,
             device=device,
             conf_threshold=conf_threshold,
+            iou_threshold=iou_threshold,
         )
         print(f"可视化图片已保存: {vis_output_dir}")
     else:
@@ -528,17 +541,20 @@ if __name__ == "__main__":
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='在测试集上评估训练好的 YOLO 模型')
     parser.add_argument('--model', type=str, default=None,
-                       help='模型文件路径（默认：自动查找最新的best.pt）')
-    parser.add_argument('--conf', type=float, default=0.25,
-                       help='置信度阈值（默认: 0.25）')
-    parser.add_argument('--iou', type=float, default=0.7,
-                       help='IoU阈值，用于NMS（默认: 0.7）')
+                       help='模型文件路径（默认：自动查找最新的模型）')
+    parser.add_argument('--model-type', type=str, default='best', choices=['best', 'last'],
+                       help='模型类型：best 或 last（仅在未指定--model时有效，默认: best）')
+    parser.add_argument('--conf', type=float, default=0.15,
+                       help='置信度阈值（默认: 0.15）')
+    parser.add_argument('--iou', type=float, default=0.25,
+                       help='IoU阈值，用于NMS（默认: 0.25）')
     
     args = parser.parse_args()
     
     try:
         test_results, test_summary = test_model(
             model_path=args.model,
+            model_type=args.model_type,
             conf_threshold=args.conf,
             iou_threshold=args.iou
         )

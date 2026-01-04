@@ -1,0 +1,12 @@
+names:
+- carbon-fibre-defect
+nc: 1
+roboflow:
+  license: CC BY 4.0
+  project: carbon-fiber-defect
+  url: https://universe.roboflow.com/carbonfibredefect/carbon-fiber-defect/dataset/2
+  version: 2
+  workspace: carbonfibredefect
+test: test/images
+train: E:\AI\AI经典实践项目\Github\目标检测\carbon_fiber_defect_detection_system_pyhton3.10\dataset\train\images
+val: E:\AI\AI经典实践项目\Github\目标检测\carbon_fiber_defect_detection_system_pyhton3.10\dataset\test\images
