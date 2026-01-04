@@ -352,6 +352,15 @@ def convert_video_to_16_9(video_bytes: bytes, video_filename: Optional[str] = No
             # 确保fps有效
             fps = original_fps if original_fps > 0 else 30.0
             
+            # 确保视频尺寸是偶数（yuv420p要求）
+            h, w = frames_16_9[0].shape[:2]
+            if w % 2 != 0:
+                w = w - 1
+            if h % 2 != 0:
+                h = h - 1
+            if w != frames_16_9[0].shape[1] or h != frames_16_9[0].shape[0]:
+                frames_16_9 = [cv2.resize(frame, (w, h)) for frame in frames_16_9]
+            
             # 使用imageio创建视频，确保浏览器兼容性
             imageio.mimsave(
                 output_video_path,
@@ -359,13 +368,12 @@ def convert_video_to_16_9(video_bytes: bytes, video_filename: Optional[str] = No
                 fps=fps,
                 codec='libx264',
                 quality=8,
-                pixelformat='yuv420p',
-                macro_block_size=1  # 确保尺寸是16的倍数，提高兼容性
+                pixelformat='yuv420p'  # yuv420p要求宽度和高度都是偶数
             )
             
-            # 等待文件写入完成
+            # 等待文件写入完成（在Streamlit Cloud上可能需要更长时间）
             import time
-            time.sleep(0.5)
+            time.sleep(1.0)  # 增加等待时间，确保文件完全写入
             
             # 读取视频文件并验证
             if Path(output_video_path).exists():
@@ -661,19 +669,29 @@ def run_inference_video(
                     rgb_frames = [cv2.resize(frame, (new_w, new_h)) for frame in rgb_frames]
             
             # 使用imageio创建视频，codec='libx264'确保兼容性
+            # 注意：确保视频尺寸是偶数（某些编码器要求）
+            if len(rgb_frames) > 0:
+                h, w = rgb_frames[0].shape[:2]
+                # 确保宽度和高度都是偶数
+                if w % 2 != 0:
+                    w = w - 1
+                if h % 2 != 0:
+                    h = h - 1
+                if w != rgb_frames[0].shape[1] or h != rgb_frames[0].shape[0]:
+                    rgb_frames = [cv2.resize(frame, (w, h)) for frame in rgb_frames]
+            
             imageio.mimsave(
                 output_video_path,
                 rgb_frames,
                 fps=video_fps,
                 codec='libx264',
                 quality=8,
-                pixelformat='yuv420p',  # 确保浏览器兼容性
-                macro_block_size=1  # 确保尺寸是16的倍数，提高兼容性
+                pixelformat='yuv420p'  # 确保浏览器兼容性，yuv420p要求宽度和高度都是偶数
             )
             
-            # 等待文件写入完成
+            # 等待文件写入完成（在Streamlit Cloud上可能需要更长时间）
             import time
-            time.sleep(0.5)
+            time.sleep(1.0)  # 增加等待时间，确保文件完全写入
             
             # 读取视频文件并验证
             if Path(output_video_path).exists():
@@ -682,8 +700,16 @@ def run_inference_video(
                     with open(output_video_path, 'rb') as f:
                         processed_video_bytes = f.read()
                     # 验证视频字节是否有效（至少应该有一些数据）
-                    if len(processed_video_bytes) < 1000:  # 如果小于1KB，可能有问题
+                    # 注意：即使是小视频也可能小于1KB，所以降低阈值
+                    if len(processed_video_bytes) < 100:  # 如果小于100字节，可能有问题
                         processed_video_bytes = None
+                    # 验证视频文件头，确保是有效的MP4文件
+                    # MP4文件通常以ftyp box开头，但前面可能有4字节的大小字段
+                    # 为了兼容性，我们检查是否包含ftyp（可能在文件开头或稍后位置）
+                    elif b'ftyp' not in processed_video_bytes[:100]:
+                        # 不是标准的MP4文件，但为了兼容性，仍然尝试使用
+                        # 某些编码器可能产生不同的文件头格式
+                        pass
                 else:
                     processed_video_bytes = None
             else:
@@ -1795,8 +1821,112 @@ def main():
             # 尝试将原始视频转换为16:9格式
             video_display_bytes = convert_video_to_16_9(video_bytes, video_file.name)
             if video_display_bytes is None:
-                # 如果转换失败，使用原始视频（但可能不是16:9）
-                video_display_bytes = video_bytes
+                # 如果转换失败，尝试使用OpenCV直接处理（作为fallback）
+                try:
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
+                        tmp.write(video_bytes)
+                        tmp_path = tmp.name
+                    
+                    cap = cv2.VideoCapture(tmp_path)
+                    if cap.isOpened():
+                        # 读取第一帧来获取尺寸
+                        ret, first_frame = cap.read()
+                        if ret:
+                            # 将第一帧转换为16:9
+                            first_frame_16_9 = resize_to_16_9(first_frame)
+                            h_16_9, w_16_9 = first_frame_16_9.shape[:2]
+                            
+                            # 重新读取所有帧并转换为16:9
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                            
+                            frames_16_9 = []
+                            while True:
+                                ret, frame = cap.read()
+                                if not ret:
+                                    break
+                                frame_16_9 = resize_to_16_9(frame)
+                                frames_16_9.append(cv2.cvtColor(frame_16_9, cv2.COLOR_BGR2RGB))
+                            
+                            cap.release()
+                            
+                            # 使用imageio保存
+                            if len(frames_16_9) > 0:
+                                try:
+                                    import imageio
+                                    output_path = tempfile.NamedTemporaryFile(suffix='.mp4', delete=False).name
+                                    
+                                    # 确保视频尺寸是偶数（yuv420p要求）
+                                    if len(frames_16_9) > 0:
+                                        h, w = frames_16_9[0].shape[:2]
+                                        if w % 2 != 0:
+                                            w = w - 1
+                                        if h % 2 != 0:
+                                            h = h - 1
+                                        if w != frames_16_9[0].shape[1] or h != frames_16_9[0].shape[0]:
+                                            frames_16_9 = [cv2.resize(frame, (w, h)) for frame in frames_16_9]
+                                    
+                                    imageio.mimsave(
+                                        output_path,
+                                        frames_16_9,
+                                        fps=fps,
+                                        codec='libx264',
+                                        quality=8,
+                                        pixelformat='yuv420p'
+                                    )
+                                    import time
+                                    time.sleep(1.0)  # 增加等待时间，确保文件完全写入
+                                    if Path(output_path).exists() and Path(output_path).stat().st_size > 0:
+                                        with open(output_path, 'rb') as f:
+                                            video_display_bytes = f.read()
+                                        try:
+                                            Path(output_path).unlink()
+                                        except Exception:
+                                            pass
+                                        try:
+                                            Path(tmp_path).unlink()
+                                        except Exception:
+                                            pass
+                                        # 成功转换，跳出
+                                        if video_display_bytes and len(video_display_bytes) > 100:
+                                            pass  # 成功，继续使用video_display_bytes
+                                        else:
+                                            video_display_bytes = None
+                                    else:
+                                        video_display_bytes = None
+                                        try:
+                                            Path(output_path).unlink()
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    video_display_bytes = None
+                            else:
+                                video_display_bytes = None
+                            
+                            try:
+                                Path(tmp_path).unlink()
+                            except Exception:
+                                pass
+                        else:
+                            cap.release()
+                            try:
+                                Path(tmp_path).unlink()
+                            except Exception:
+                                pass
+                            video_display_bytes = None
+                    else:
+                        video_display_bytes = None
+                        try:
+                            Path(tmp_path).unlink()
+                        except Exception:
+                            pass
+                except Exception:
+                    video_display_bytes = None
+                
+                # 如果所有转换都失败，使用原始视频（但可能不是16:9）
+                if video_display_bytes is None:
+                    video_display_bytes = video_bytes
             
             # 如果已经有检测结果，则从 session_state 中取出检测视频字节
             processed_video_bytes_preview = None
@@ -1808,8 +1938,21 @@ def main():
                 processed_video_bytes_preview = result.get("processed_video_bytes")
                 # 验证视频字节是否有效
                 if processed_video_bytes_preview is not None:
+                    # 检查视频字节长度
                     if len(processed_video_bytes_preview) == 0:
                         processed_video_bytes_preview = None
+                    # 检查是否是有效的视频数据（至少应该有一些数据）
+                    elif len(processed_video_bytes_preview) < 100:
+                        # 视频数据太小，可能无效
+                        processed_video_bytes_preview = None
+                    # 验证视频文件头（MP4文件通常以ftyp开头或包含特定的字节序列）
+                    elif not (processed_video_bytes_preview[:4] == b'ftyp' or 
+                             processed_video_bytes_preview[:8] == b'\x00\x00\x00\x18ftyp' or
+                             processed_video_bytes_preview[:8] == b'\x00\x00\x00\x20ftyp' or
+                             b'ftyp' in processed_video_bytes_preview[:100]):
+                        # 不是有效的MP4文件，但为了兼容性，仍然尝试使用
+                        # 在某些情况下，视频文件可能以其他格式开头
+                        pass
 
             col_v1, col_v2 = st.columns(2)
             with col_v1:
