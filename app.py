@@ -1,10 +1,15 @@
 import os
 # 在导入 OpenCV 之前设置环境变量，禁用 GUI 功能（适用于 headless 环境）
+# 注意：这些设置不会影响 cv2.VideoCapture() 和视频文件读取功能
 os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '0'
 os.environ['OPENCV_IO_ENABLE_JASPER'] = '0'
 # 禁用 OpenCV 的 GUI 后端，强制使用 headless 模式
-os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-os.environ['DISPLAY'] = ''
+# 这些设置只影响 cv2.imshow() 等GUI显示功能，不影响视频文件读取和处理
+# 在 Streamlit Cloud 等 headless 环境中，这些设置是必要的
+if 'QT_QPA_PLATFORM' not in os.environ:
+    os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+if 'DISPLAY' not in os.environ:
+    os.environ['DISPLAY'] = ''
 
 import tempfile
 import time
@@ -29,6 +34,9 @@ plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
 try:
     import cv2
     # 验证 OpenCV 版本并设置 headless 模式
+    # 注意：setNumThreads(0) 禁用多线程，可能影响视频处理性能，但不影响功能
+    # 如果视频处理速度慢，可以尝试设置为1或更高值
+    # 但在某些系统上，多线程可能导致问题，所以保持为0更安全
     cv2.setNumThreads(0)  # 禁用多线程以避免某些系统库问题
 except (ImportError, OSError) as e:
     error_msg = str(e)
