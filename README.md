@@ -1055,6 +1055,7 @@ streamlit run app.py
 - **项目作者**：Joyce Pan
 - **联系邮箱**：[panjiao007@126.com](mailto:panjiao007@126.com)
 - **Github**：[sharp-007/carbon_fiber_defect_detection_system](https://github.com/sharp-007/carbon_fiber_defect_detection_system)
+- **在线演示**：[https://carbon-fiber-defect-detection-system.streamlit.app/](https://carbon-fiber-defect-detection-system.streamlit.app/)
 - **版本控制**：使用 Git 进行版本管理
 
 ### 11. 常见问题
