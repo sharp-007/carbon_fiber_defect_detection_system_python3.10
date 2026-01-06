@@ -4,6 +4,8 @@
 
 # Web 应用框架
 streamlit>=1.18.0
+streamlit-webrtc>=0.44.0
+av>=10.0.0  # streamlit-webrtc 依赖
 
 # 数值计算和数据处理（必须在 opencv 之前安装）
 numpy>=1.23.0,<2.0.0
