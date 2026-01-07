@@ -56,3 +56,5 @@
 2026-01-03 16:34:13,1767429253.99848,test98_12bit.jpg,C:\Users\潘姣\AppData\Local\Temp\defect_detect_models\best.pt,0.06,0.15,cpu
 2026-01-03 16:40:15,1767429615.2084851,test98_12bit.jpg,model\best.pt,0.06,0.15,cpu
 2026-01-04 15:57:50,1767513470.5671632,test14_12bit.jpg,model\best.pt,0.15,0.25,cpu
+2026-01-06 16:45:40,1767689140.5440152,test66_12bit.jpg,model\best.pt,0.15,0.25,cpu
+2026-01-07 14:58:21,1767769101.7635722,test70_12bit.jpg,model\best.pt,0.15,0.25,cpu
