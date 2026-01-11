@@ -103,6 +103,7 @@ except ImportError:
 camera_lock = threading.Lock()
 camera_result_container = {
     "objects": [],           # 当前帧检测到的对象列表
+    "current_defect_count": 0, # 当前帧检测到的缺陷数量
     "frame_count": 0,        # 处理的帧数
     "detection_count": 0,    # 检测到缺陷的次数
     "last_detect_time": 0.0, # 上次检测时间
@@ -1135,6 +1136,7 @@ def create_defect_detection_callback(model, conf: float, iou: float, device: str
         "start_time": None,
         "frames": [],       # 保存帧图片
         "records": [],      # 保存 DataFrame 记录
+        "last_objects": [], # 保存最后一次检测到的对象（持续显示）
     }
     
     def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
@@ -1165,11 +1167,19 @@ def create_defect_detection_callback(model, conf: float, iou: float, device: str
             callback_state["last_detect_time"] = current_time
             callback_state["detection_count"] += 1
             
+            # 计算时间信息（无论是否有缺陷都需要）
+            start_time_val = callback_state["start_time"]
+            relative_time = current_time - start_time_val
+            dt = datetime.fromtimestamp(current_time)
+            seconds_of_day = dt.hour * 3600 + dt.minute * 60 + dt.second + dt.microsecond / 1_000_000.0
+            time_str_real_precise = format_seconds_to_hhmmss_mmm(seconds_of_day)
+            date_str = dt.strftime("%Y-%m-%d")
+            
             try:
                 # 使用 YOLO 进行检测
                 results = model(image, conf=conf, iou=iou, device=device, verbose=False)
                 
-                if len(results) > 0 and results[0].boxes is not None:
+                if len(results) > 0 and results[0].boxes is not None and len(results[0].boxes) > 0:
                     boxes = results[0].boxes
                     boxes_xyxy = []
                     scores_list = []
@@ -1192,51 +1202,78 @@ def create_defect_detection_callback(model, conf: float, iou: float, device: str
                     # 在图像上绘制检测结果
                     annotated_image = results[0].plot()
                     
-                    # 保存检测结果（用于后续的详细展示和下载）
-                    if len(detected_objects) > 0:
-                        try:
-                            # 保存带标注的帧
-                            frame_16_9 = resize_to_16_9(annotated_image)
-                            callback_state["frames"].append(ndarray_to_pil(frame_16_9))
-                            
-                            # 创建 DataFrame 记录
-                            start_time_val = callback_state["start_time"]
-                            relative_time = current_time - start_time_val
-                            dt = datetime.fromtimestamp(current_time)
-                            seconds_of_day = dt.hour * 3600 + dt.minute * 60 + dt.second + dt.microsecond / 1_000_000.0
-                            time_str_real_precise = format_seconds_to_hhmmss_mmm(seconds_of_day)
-                            date_str = dt.strftime("%Y-%m-%d")
-                            
-                            boxes_array = np.array(boxes_xyxy)
-                            widths = (boxes_array[:, 2] - boxes_array[:, 0]).astype(int)
-                            heights = (boxes_array[:, 3] - boxes_array[:, 1]).astype(int)
-                            
-                            df_frame = pd.DataFrame({
-                                "日期": [date_str] * len(cls_names),
-                                "检测序号": [callback_state["detection_count"]] * len(cls_names),
-                                "帧序号": [callback_state["frame_count"]] * len(cls_names),
-                                "时间点(秒)": [round(relative_time, 2)] * len(cls_names),
-                                "绝对时间戳": [round(current_time, 2)] * len(cls_names),
-                                "时间点(HH:MM:SS.mmm)": [time_str_real_precise] * len(cls_names),
-                                "缺陷类别": cls_names,
-                                "置信度": scores_list,
-                                "左上角X": boxes_array[:, 0].astype(int),
-                                "左上角Y": boxes_array[:, 1].astype(int),
-                                "右下角X": boxes_array[:, 2].astype(int),
-                                "右下角Y": boxes_array[:, 3].astype(int),
-                                "宽度": widths,
-                                "高度": heights,
-                                "面积": (widths * heights).astype(int),
-                            })
-                            callback_state["records"].append(df_frame)
-                        except Exception:
-                            pass
+                    # 更新最后检测到的对象（用于持续显示）
+                    callback_state["last_objects"] = detected_objects.copy()
+                    
+                    try:
+                        # 保存带标注的帧
+                        frame_16_9 = resize_to_16_9(annotated_image)
+                        callback_state["frames"].append(ndarray_to_pil(frame_16_9))
+                        
+                        # 创建 DataFrame 记录（有缺陷）
+                        boxes_array = np.array(boxes_xyxy)
+                        widths = (boxes_array[:, 2] - boxes_array[:, 0]).astype(int)
+                        heights = (boxes_array[:, 3] - boxes_array[:, 1]).astype(int)
+                        
+                        df_frame = pd.DataFrame({
+                            "日期": [date_str] * len(cls_names),
+                            "检测序号": [callback_state["detection_count"]] * len(cls_names),
+                            "帧序号": [callback_state["frame_count"]] * len(cls_names),
+                            "时间点(秒)": [round(relative_time, 2)] * len(cls_names),
+                            "绝对时间戳": [round(current_time, 2)] * len(cls_names),
+                            "时间点(HH:MM:SS.mmm)": [time_str_real_precise] * len(cls_names),
+                            "缺陷类别": cls_names,
+                            "置信度": scores_list,
+                            "左上角X": boxes_array[:, 0].astype(int),
+                            "左上角Y": boxes_array[:, 1].astype(int),
+                            "右下角X": boxes_array[:, 2].astype(int),
+                            "右下角Y": boxes_array[:, 3].astype(int),
+                            "宽度": widths,
+                            "高度": heights,
+                            "面积": (widths * heights).astype(int),
+                            "缺陷数": [len(cls_names)] * len(cls_names),
+                        })
+                        callback_state["records"].append(df_frame)
+                    except Exception:
+                        pass
+                else:
+                    # 未检测到缺陷，记录一条空记录（缺陷信息为 None）
+                    callback_state["last_objects"] = []  # 清空当前检测对象
+                    try:
+                        # 保存无缺陷帧
+                        frame_16_9 = resize_to_16_9(image)
+                        callback_state["frames"].append(ndarray_to_pil(frame_16_9))
+                        
+                        # 创建 DataFrame 记录（无缺陷，用 None 表示）
+                        df_frame = pd.DataFrame({
+                            "日期": [date_str],
+                            "检测序号": [callback_state["detection_count"]],
+                            "帧序号": [callback_state["frame_count"]],
+                            "时间点(秒)": [round(relative_time, 2)],
+                            "绝对时间戳": [round(current_time, 2)],
+                            "时间点(HH:MM:SS.mmm)": [time_str_real_precise],
+                            "缺陷类别": [None],
+                            "置信度": [None],
+                            "左上角X": [None],
+                            "左上角Y": [None],
+                            "右下角X": [None],
+                            "右下角Y": [None],
+                            "宽度": [None],
+                            "高度": [None],
+                            "面积": [None],
+                            "缺陷数": [0],
+                        })
+                        callback_state["records"].append(df_frame)
+                    except Exception:
+                        pass
             except Exception:
                 pass
         
         # 更新共享容器（线程安全）
         with camera_lock:
-            camera_result_container["objects"] = detected_objects
+            # 使用当前帧的 detected_objects（可能为空列表）
+            camera_result_container["objects"] = detected_objects.copy()
+            camera_result_container["current_defect_count"] = len(detected_objects)  # 当前帧缺陷数
             camera_result_container["frame_count"] = callback_state["frame_count"]
             camera_result_container["detection_count"] = callback_state["detection_count"]
             camera_result_container["last_detect_time"] = callback_state["last_detect_time"]
@@ -1261,6 +1298,7 @@ def reset_camera_result_container():
     global camera_result_container
     with camera_lock:
         camera_result_container["objects"] = []
+        camera_result_container["current_defect_count"] = 0
         camera_result_container["frame_count"] = 0
         camera_result_container["detection_count"] = 0
         camera_result_container["last_detect_time"] = 0.0
@@ -2722,6 +2760,7 @@ def main():
                     # 从全局容器读取数据（线程安全）
                     with camera_lock:
                         objects = camera_result_container["objects"].copy()
+                        current_defect_count = camera_result_container.get("current_defect_count", 0)
                         frame_count = camera_result_container["frame_count"]
                         detection_count = camera_result_container["detection_count"]
                         start_time_container = camera_result_container["start_time"]
@@ -2788,8 +2827,17 @@ def main():
                             
                             st.metric("总缺陷数", total_defects)
                             
-                            if objects:
-                                st.success(f"✅ 当前帧: **{len(objects)}** 个缺陷")
+                            # 显示当前帧检测结果（使用 current_defect_count）
+                            st.metric("当前帧缺陷数", current_defect_count)
+                            
+                            if current_defect_count > 0 and objects:
+                                st.success(f"✅ 检测到 **{current_defect_count}** 个缺陷")
+                                # 显示当前检测到的缺陷详情
+                                df_current = pd.DataFrame([
+                                    {"缺陷类别": obj["class"], "置信度": f"{obj['confidence']:.2%}"}
+                                    for obj in objects
+                                ])
+                                st.dataframe(df_current, use_container_width=True, height=120)
                             else:
                                 st.info("当前帧: 无缺陷")
                     
@@ -2810,50 +2858,41 @@ def main():
                         else:
                             st.info("📋 等待检测数据...")
                     
-                    # 渲染实时统计图表（下方全宽）- 只显示缺陷时间分布
+                    # 渲染实时统计图表（下方全宽）- 显示缺陷时间分布（包括缺陷数为0的时间点）
                     with realtime_chart_placeholder.container():
                         if records_container and len(records_container) > 0:
                             st.markdown("#### 📊 缺陷时间分布")
                             try:
                                 current_df = pd.concat(records_container, ignore_index=True)
                                 
-                                if "缺陷类别" in current_df.columns:
-                                    defect_df = current_df[current_df["缺陷类别"].notna()]
-                                    if not defect_df.empty:
-                                        if "时间点(HH:MM:SS.mmm)" in current_df.columns:
-                                            all_time_points = (
-                                                current_df["时间点(HH:MM:SS.mmm)"]
-                                                .astype(str)
-                                                .dropna()
-                                                .sort_values()
-                                                .unique()
+                                if "时间点(HH:MM:SS.mmm)" in current_df.columns and "缺陷数" in current_df.columns:
+                                    # 按时间点和检测序号分组，取每次检测的缺陷数（使用最大值，因为同一检测序号的缺陷数相同）
+                                    time_defect_df = current_df.groupby(["时间点(HH:MM:SS.mmm)", "检测序号"]).agg({
+                                        "缺陷数": "max"
+                                    }).reset_index()
+                                    
+                                    # 按时间点排序
+                                    time_defect_df = time_defect_df.sort_values("检测序号")
+                                    
+                                    if len(time_defect_df) > 0:
+                                        time_counts = pd.DataFrame({
+                                            "时间点": time_defect_df["时间点(HH:MM:SS.mmm)"].values,
+                                            "缺陷数量": time_defect_df["缺陷数"].values,
+                                        })
+                                        chart = (
+                                            alt.Chart(time_counts)
+                                            .mark_line(point=True)
+                                            .encode(
+                                                x=alt.X(field="时间点", type="nominal", sort=None, title="时间点"),
+                                                y=alt.Y(field="缺陷数量", type="quantitative", title="缺陷数量"),
                                             )
-                                            if len(all_time_points) > 0:
-                                                defect_counts = (
-                                                    defect_df.groupby("时间点(HH:MM:SS.mmm)")
-                                                    .size()
-                                                    .reindex(all_time_points, fill_value=0)
-                                                )
-                                                time_counts = pd.DataFrame({
-                                                    "时间点": all_time_points,
-                                                    "缺陷数量": defect_counts.values,
-                                                })
-                                                chart = (
-                                                    alt.Chart(time_counts)
-                                                    .mark_line(point=True)
-                                                    .encode(
-                                                        x=alt.X(field="时间点", type="nominal", sort=None, title="时间点"),
-                                                        y=alt.Y(field="缺陷数量", type="quantitative", title="缺陷数量"),
-                                                    )
-                                                    .properties(height=250)
-                                                )
-                                                st.altair_chart(chart, use_container_width=True)
-                                            else:
-                                                st.info("等待更多数据...")
-                                        else:
-                                            st.info("等待时间数据...")
+                                            .properties(height=250)
+                                        )
+                                        st.altair_chart(chart, use_container_width=True)
                                     else:
-                                        st.info("暂未检测到缺陷")
+                                        st.info("等待更多数据...")
+                                else:
+                                    st.info("等待时间数据...")
                             except Exception:
                                 st.info("等待检测数据...")
                         else:
