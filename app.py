@@ -1137,6 +1137,7 @@ def create_defect_detection_callback(model, conf: float, iou: float, device: str
         "frames": [],       # 保存帧图片
         "records": [],      # 保存 DataFrame 记录
         "last_objects": [], # 保存最后一次检测到的对象（持续显示）
+        "current_defect_count": 0,  # 当前检测的缺陷数（每次检测更新）
     }
     
     def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
@@ -1202,8 +1203,9 @@ def create_defect_detection_callback(model, conf: float, iou: float, device: str
                     # 在图像上绘制检测结果
                     annotated_image = results[0].plot()
                     
-                    # 更新最后检测到的对象（用于持续显示）
+                    # 更新最后检测到的对象和缺陷数（用于持续显示）
                     callback_state["last_objects"] = detected_objects.copy()
+                    callback_state["current_defect_count"] = len(detected_objects)
                     
                     try:
                         # 保存带标注的帧
@@ -1239,6 +1241,7 @@ def create_defect_detection_callback(model, conf: float, iou: float, device: str
                 else:
                     # 未检测到缺陷，记录一条空记录（缺陷信息为 None）
                     callback_state["last_objects"] = []  # 清空当前检测对象
+                    callback_state["current_defect_count"] = 0  # 缺陷数为0
                     try:
                         # 保存无缺陷帧
                         frame_16_9 = resize_to_16_9(image)
@@ -1271,9 +1274,9 @@ def create_defect_detection_callback(model, conf: float, iou: float, device: str
         
         # 更新共享容器（线程安全）
         with camera_lock:
-            # 使用当前帧的 detected_objects（可能为空列表）
-            camera_result_container["objects"] = detected_objects.copy()
-            camera_result_container["current_defect_count"] = len(detected_objects)  # 当前帧缺陷数
+            # 使用 callback_state 中保存的值（保持最近一次检测的结果）
+            camera_result_container["objects"] = callback_state["last_objects"].copy()
+            camera_result_container["current_defect_count"] = callback_state["current_defect_count"]
             camera_result_container["frame_count"] = callback_state["frame_count"]
             camera_result_container["detection_count"] = callback_state["detection_count"]
             camera_result_container["last_detect_time"] = callback_state["last_detect_time"]
@@ -2643,45 +2646,8 @@ def main():
         if 'stop_camera' not in st.session_state:
             st.session_state.stop_camera = False
         
-        # 控制按钮
-        button_col1, button_col2 = st.columns(2)
-        with button_col1:
-            if st.button("⏹️ 停止检测", type="secondary", use_container_width=True, key="stop_camera_button_main"):
-                st.session_state.stop_camera = True
-                # 停止检测时更新last_detect_time并记录参数到CSV文件
-                if 'camera_detection_results' in st.session_state:
-                    st.session_state.camera_detection_results['last_detect_time'] = time.time()
-                log_camera_sidebar_parameters(current_camera_params)
-                st.success("✅ 检测已停止。检测结果已保存，请查看下方统计信息。如需停止视频流，请点击视频组件上的 STOP 按钮。")
-                st.rerun()
-        with button_col2:
-            if st.button("🗑️ 清空检测结果", type="secondary", use_container_width=True, key="clear_camera_results_main"):
-                # 重置全局结果容器
-                reset_camera_result_container()
-                # 重置 session_state
-                if 'camera_detection_results' in st.session_state:
-                    st.session_state.camera_detection_results = {
-                        'frames': [],
-                        'records': [],
-                        'frame_count': 0,
-                        'detection_count': 0,
-                        'actual_detection_count': 0,
-                        'start_time': None,
-                        'end_time': None,
-                        'class_counts': Counter(),
-                        'all_detections': [],
-                    }
-                if 'camera_history' in st.session_state:
-                    st.session_state.camera_history = {
-                        'current_objects': [],
-                        'all_detections': [],
-                        'frame_count': 0,
-                        'start_time': None,
-                        'end_time': None,
-                        'class_counts': Counter(),
-                    }
-                st.session_state.stop_camera = False  # 重置停止标志
-                st.rerun()
+        # 注意：停止检测按钮已移除，使用 webrtc_streamer 自带的 STOP 按钮
+        # 清空检测结果按钮放在 webrtc_streamer 组件下方
         
         # 初始化摄像头检测历史（参考 yolo_streamlit_cloud_mini_project_test）
         if 'camera_history' not in st.session_state:
@@ -2707,12 +2673,6 @@ def main():
             # 获取 ICE 服务器配置
             ice_servers = get_ice_servers()
             
-            # 显示 TURN 服务器状态
-            if any("turn:" in str(s.get("urls", [])) for s in ice_servers):
-                st.success("✅ TURN 服务器已配置（WebRTC 连接更稳定）")
-            else:
-                st.warning("⚠️ 使用 STUN 服务器（如在云端部署，请配置 Twilio TURN 以获得更好的连接）")
-            
             # 主布局：视频和统计信息
             col_video, col_stats = st.columns([3, 2])
             
@@ -2734,6 +2694,35 @@ def main():
                     },
                     async_processing=True,
                 )
+                
+                # 清空检测结果按钮（放在 START 按钮下方，样式一致）
+                if st.button("🗑️ 清空检测结果", type="primary", use_container_width=True, key="clear_camera_results_main"):
+                    # 重置全局结果容器
+                    reset_camera_result_container()
+                    # 重置 session_state
+                    if 'camera_detection_results' in st.session_state:
+                        st.session_state.camera_detection_results = {
+                            'frames': [],
+                            'records': [],
+                            'frame_count': 0,
+                            'detection_count': 0,
+                            'actual_detection_count': 0,
+                            'start_time': None,
+                            'end_time': None,
+                            'class_counts': Counter(),
+                            'all_detections': [],
+                        }
+                    if 'camera_history' in st.session_state:
+                        st.session_state.camera_history = {
+                            'current_objects': [],
+                            'all_detections': [],
+                            'frame_count': 0,
+                            'start_time': None,
+                            'end_time': None,
+                            'class_counts': Counter(),
+                        }
+                    st.session_state.stop_camera = False  # 重置停止标志
+                    st.rerun()
             
             with col_stats:
                 st.markdown("##### 📊 实时检测统计")
@@ -2790,56 +2779,33 @@ def main():
                         'last_detect_time': time.time()
                     }
                     
-                    # 渲染实时统计（右侧列）
+                    # 渲染实时统计（右侧列）- 只显示检测时长、当前帧缺陷数及置信度（表格形式）
                     with stats_placeholder.container():
-                        if not objects and detection_count == 0:
-                            st.info("📊 等待检测结果... 请确保摄像头已开启")
+                        # 计算检测时长
+                        if start_time_container:
+                            elapsed_time = time.time() - start_time_container
+                            if elapsed_time >= 60:
+                                minutes = int(elapsed_time // 60)
+                                seconds = int(elapsed_time % 60)
+                                time_str = f"{minutes}分{seconds}秒"
+                            else:
+                                time_str = f"{int(elapsed_time)}秒"
                         else:
-                            # 计算检测时长
-                            if start_time_container:
-                                elapsed_time = time.time() - start_time_container
-                                if elapsed_time >= 60:
-                                    minutes = int(elapsed_time // 60)
-                                    seconds = int(elapsed_time % 60)
-                                    time_str = f"{minutes}分{seconds}秒"
-                                else:
-                                    time_str = f"{int(elapsed_time)}秒"
-                            else:
-                                time_str = "0秒"
-                            
-                            st.caption(f"🔴 实时检测中 | 检测时长: {time_str}")
-                            
-                            # 统计指标
-                            m_col1, m_col2 = st.columns(2)
-                            with m_col1:
-                                st.metric("处理帧数", frame_count)
-                            with m_col2:
-                                st.metric("检测次数", detection_count)
-                            
-                            # 统计总缺陷数
-                            total_defects = 0
-                            if records_container:
-                                try:
-                                    all_df = pd.concat(records_container, ignore_index=True)
-                                    total_defects = len(all_df[all_df["缺陷类别"].notna()])
-                                except Exception:
-                                    pass
-                            
-                            st.metric("总缺陷数", total_defects)
-                            
-                            # 显示当前帧检测结果（使用 current_defect_count）
-                            st.metric("当前帧缺陷数", current_defect_count)
-                            
-                            if current_defect_count > 0 and objects:
-                                st.success(f"✅ 检测到 **{current_defect_count}** 个缺陷")
-                                # 显示当前检测到的缺陷详情
-                                df_current = pd.DataFrame([
-                                    {"缺陷类别": obj["class"], "置信度": f"{obj['confidence']:.2%}"}
-                                    for obj in objects
-                                ])
-                                st.dataframe(df_current, use_container_width=True, height=120)
-                            else:
-                                st.info("当前帧: 无缺陷")
+                            time_str = "0秒"
+                        
+                        # 检测时长
+                        st.metric("⏱️ 检测时长", time_str)
+                        
+                        # 当前帧缺陷数及置信度（表格形式）
+                        st.markdown("**🎯 当前帧检测结果**")
+                        if current_defect_count > 0 and objects:
+                            df_current = pd.DataFrame([
+                                {"缺陷类别": obj["class"], "置信度": f"{obj['confidence']:.2%}"}
+                                for obj in objects
+                            ])
+                            st.dataframe(df_current, use_container_width=True, hide_index=True)
+                        else:
+                            st.info("无缺陷")
                     
                     # 渲染实时详细结果表格（下方全宽）
                     with realtime_table_placeholder.container():
@@ -2924,52 +2890,41 @@ def main():
                 
             else:
                 with col_stats:
-                    status_placeholder.info("👆 点击 'START' 按钮开启摄像头")
-                    
                     # 从 session_state 读取保存的历史结果
                     history = st.session_state.camera_history
                     
                     with stats_placeholder.container():
                         if history['all_detections']:
-                            # 显示汇总统计
+                            # 显示汇总统计：只显示检测时长、总缺陷数、平均置信度
                             all_detections = history['all_detections']
-                            class_counts = history['class_counts']
                             start_time_hist = history['start_time']
                             end_time_hist = history['end_time']
                             
                             # 计算检测时长
                             if start_time_hist and end_time_hist:
                                 duration = (end_time_hist - start_time_hist).total_seconds()
-                                duration_str = f"{duration:.1f} 秒"
+                                if duration >= 60:
+                                    minutes = int(duration // 60)
+                                    seconds = int(duration % 60)
+                                    duration_str = f"{minutes}分{seconds}秒"
+                                else:
+                                    duration_str = f"{duration:.1f}秒"
                             else:
                                 duration_str = "未知"
                             
-                            st.caption(f"⏹️ 检测已停止（结果已汇总）")
+                            # 计算平均置信度
+                            if all_detections:
+                                confidences = [obj.get('confidence', 0) for obj in all_detections]
+                                avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                            else:
+                                avg_confidence = 0
                             
-                            # 汇总统计
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.metric("📷 处理帧数", f"{history['frame_count']}")
-                            with col2:
-                                st.metric("🎯 总检测数", f"{len(all_detections)}")
-                            
-                            col3, col4 = st.columns(2)
-                            with col3:
-                                st.metric("📦 类别数", f"{len(class_counts)}")
-                            with col4:
-                                st.metric("⏱️ 检测时长", duration_str)
-                            
-                            # 类别统计
-                            if class_counts:
-                                st.markdown("##### 📊 各类别检测次数")
-                                df_counts = pd.DataFrame({
-                                    "缺陷类别": list(class_counts.keys()),
-                                    "检测次数": list(class_counts.values())
-                                })
-                                df_counts = df_counts.sort_values("检测次数", ascending=False)
-                                st.bar_chart(df_counts.set_index("缺陷类别"))
-                        else:
-                            st.info("📊 请先开启摄像头进行检测")
+                            # 检测时长
+                            st.metric("⏱️ 检测时长", duration_str)
+                            # 总缺陷数
+                            st.metric("🎯 总缺陷数", len(all_detections))
+                            # 平均置信度
+                            st.metric("📊 平均置信度", f"{avg_confidence:.2%}")
             
             # 记录参数到日志
             if ctx.state.playing:
