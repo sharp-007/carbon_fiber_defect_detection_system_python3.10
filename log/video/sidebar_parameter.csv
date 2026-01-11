@@ -8,3 +8,4 @@
 2026-01-03 16:26:29,1767428789.7427046,test_video_1.mp4,C:\Users\潘姣\AppData\Local\Temp\defect_detect_models\best.pt,0.15,0.25,5,cpu
 2026-01-03 16:30:11,1767429011.4838214,test_video_1.mp4,C:\Users\潘姣\AppData\Local\Temp\defect_detect_models\best.pt,0.05,0.25,5,cpu
 2026-01-03 16:36:19,1767429379.892572,test_video_1.mp4,C:\Users\潘姣\AppData\Local\Temp\defect_detect_models\best.pt,0.06,0.15,5,cpu
+2026-01-11 16:45:54,1768121154.8111093,test_video_1.mp4,model\best.pt,0.15,0.25,5,cpu

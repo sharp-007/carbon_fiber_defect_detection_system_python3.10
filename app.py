@@ -26,9 +26,11 @@ import time
 import zipfile
 import io
 import copy
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import List, Tuple, Optional, Callable
+from collections import Counter
 
 import numpy as np
 import pandas as pd
@@ -87,15 +89,28 @@ except Exception:  # pragma: no cover - ultralytics may not be installed in lint
     torch = None  # type: ignore
 
 try:
-    from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+    from streamlit_webrtc import webrtc_streamer, WebRtcMode
     import av
     WEBRTC_AVAILABLE = True
 except ImportError:
     WEBRTC_AVAILABLE = False
     webrtc_streamer = None  # type: ignore
-    VideoProcessorBase = None  # type: ignore
-    RTCConfiguration = None  # type: ignore
+    WebRtcMode = None  # type: ignore
     av = None  # type: ignore
+
+# 全局锁和数据容器（用于线程间共享数据）
+# 参考: https://github.com/whitphx/streamlit-webrtc#pull-values-from-the-callback
+camera_lock = threading.Lock()
+camera_result_container = {
+    "objects": [],           # 当前帧检测到的对象列表
+    "frame_count": 0,        # 处理的帧数
+    "detection_count": 0,    # 检测到缺陷的次数
+    "last_detect_time": 0.0, # 上次检测时间
+    "start_time": None,      # 开始时间
+    "annotated_frame": None, # 带标注的帧（用于显示）
+    "frames": [],            # 保存的帧图片列表（用于下载）
+    "records": [],           # 保存的 DataFrame 记录列表（用于下载）
+}
 
 # 导入 TURN 服务器配置
 try:
@@ -1097,228 +1112,162 @@ def log_camera_sidebar_parameters(params: dict):
         pass
 
 
-class DefectDetectionVideoProcessor(VideoProcessorBase):
-    """基于 streamlit-webrtc 的视频处理器，用于实时缺陷检测"""
+def create_defect_detection_callback(model, conf: float, iou: float, device: str, time_interval: float):
+    """
+    创建视频帧回调函数（参考 yolo_streamlit_cloud_mini_project_test 的实现）
+    使用闭包传递模型和参数，使用全局锁共享数据
     
-    def __init__(self):
-        super().__init__()
-        self.model = None
-        self.conf = 0.15
-        self.iou = 0.25
-        self.device = "cpu"
-        self.time_interval = 1.0
-        self.last_detect_time = 0.0
-        self.frame_count = 0
-        self.detection_count = 0
-        self.start_time = None
-        self.stop_camera = False
-        # 使用实例属性存储检测结果，避免后台线程直接操作 session_state
-        self.detection_results = {
-            'frames': [],
-            'records': [],
-            'frame_count': 0,
-            'detection_count': 0,
-            'actual_detection_count': 0,
-            'start_time': None,
-            'last_detect_time': None
-        }
+    Args:
+        model: YOLO 模型
+        conf: 置信度阈值
+        iou: IoU 阈值
+        device: 推理设备
+        time_interval: 检测时间间隔（秒）
+    
+    Returns:
+        video_frame_callback: 视频帧回调函数
+    """
+    # 使用闭包内的局部变量跟踪状态
+    callback_state = {
+        "last_detect_time": 0.0,
+        "frame_count": 0,
+        "detection_count": 0,
+        "start_time": None,
+        "frames": [],       # 保存帧图片
+        "records": [],      # 保存 DataFrame 记录
+    }
+    
+    def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
+        """处理视频帧的回调函数"""
+        # 将 VideoFrame 转换为 numpy 数组
+        image = frame.to_ndarray(format="bgr24")
         
-    def _get_session_state(self):
-        """获取 session_state（线程安全）"""
-        try:
-            # 直接访问 st.session_state，虽然有警告但功能正常
-            # 警告已在文件开头被过滤
-            return st.session_state
-        except Exception:
+        if model is None:
+            return av.VideoFrame.from_ndarray(image, format="bgr24")
+        
+        current_time = time.time()
+        
+        # 初始化开始时间
+        if callback_state["start_time"] is None:
+            callback_state["start_time"] = current_time
+            callback_state["last_detect_time"] = current_time - time_interval - 0.1
+        
+        callback_state["frame_count"] += 1
+        
+        # 基于时间间隔判断是否应该检测
+        elapsed_since_last = current_time - callback_state["last_detect_time"]
+        should_detect = (elapsed_since_last >= time_interval)
+        
+        detected_objects = []
+        annotated_image = image
+        
+        if should_detect:
+            callback_state["last_detect_time"] = current_time
+            callback_state["detection_count"] += 1
+            
             try:
-                from streamlit.runtime.scriptrunner import get_script_run_ctx
-                ctx = get_script_run_ctx()
-                if ctx is not None:
-                    return ctx.session_state
+                # 使用 YOLO 进行检测
+                results = model(image, conf=conf, iou=iou, device=device, verbose=False)
+                
+                if len(results) > 0 and results[0].boxes is not None:
+                    boxes = results[0].boxes
+                    boxes_xyxy = []
+                    scores_list = []
+                    cls_names = []
+                    
+                    for box in boxes:
+                        cls_id = int(box.cls[0])
+                        class_name = model.names[cls_id]
+                        confidence = float(box.conf[0])
+                        xyxy = box.xyxy[0].cpu().numpy()
+                        detected_objects.append({
+                            "class": class_name,
+                            "confidence": confidence,
+                            "xyxy": xyxy.tolist(),
+                        })
+                        boxes_xyxy.append(xyxy)
+                        scores_list.append(confidence)
+                        cls_names.append(class_name)
+                    
+                    # 在图像上绘制检测结果
+                    annotated_image = results[0].plot()
+                    
+                    # 保存检测结果（用于后续的详细展示和下载）
+                    if len(detected_objects) > 0:
+                        try:
+                            # 保存带标注的帧
+                            frame_16_9 = resize_to_16_9(annotated_image)
+                            callback_state["frames"].append(ndarray_to_pil(frame_16_9))
+                            
+                            # 创建 DataFrame 记录
+                            start_time_val = callback_state["start_time"]
+                            relative_time = current_time - start_time_val
+                            dt = datetime.fromtimestamp(current_time)
+                            seconds_of_day = dt.hour * 3600 + dt.minute * 60 + dt.second + dt.microsecond / 1_000_000.0
+                            time_str_real_precise = format_seconds_to_hhmmss_mmm(seconds_of_day)
+                            date_str = dt.strftime("%Y-%m-%d")
+                            
+                            boxes_array = np.array(boxes_xyxy)
+                            widths = (boxes_array[:, 2] - boxes_array[:, 0]).astype(int)
+                            heights = (boxes_array[:, 3] - boxes_array[:, 1]).astype(int)
+                            
+                            df_frame = pd.DataFrame({
+                                "日期": [date_str] * len(cls_names),
+                                "检测序号": [callback_state["detection_count"]] * len(cls_names),
+                                "帧序号": [callback_state["frame_count"]] * len(cls_names),
+                                "时间点(秒)": [round(relative_time, 2)] * len(cls_names),
+                                "绝对时间戳": [round(current_time, 2)] * len(cls_names),
+                                "时间点(HH:MM:SS.mmm)": [time_str_real_precise] * len(cls_names),
+                                "缺陷类别": cls_names,
+                                "置信度": scores_list,
+                                "左上角X": boxes_array[:, 0].astype(int),
+                                "左上角Y": boxes_array[:, 1].astype(int),
+                                "右下角X": boxes_array[:, 2].astype(int),
+                                "右下角Y": boxes_array[:, 3].astype(int),
+                                "宽度": widths,
+                                "高度": heights,
+                                "面积": (widths * heights).astype(int),
+                            })
+                            callback_state["records"].append(df_frame)
+                        except Exception:
+                            pass
             except Exception:
                 pass
-            return None
         
-    def transform(self, frame):
-        """transform 方法（某些版本的 streamlit-webrtc 使用此方法）"""
-        return self.recv(frame)
+        # 更新共享容器（线程安全）
+        with camera_lock:
+            camera_result_container["objects"] = detected_objects
+            camera_result_container["frame_count"] = callback_state["frame_count"]
+            camera_result_container["detection_count"] = callback_state["detection_count"]
+            camera_result_container["last_detect_time"] = callback_state["last_detect_time"]
+            camera_result_container["start_time"] = callback_state["start_time"]
+            camera_result_container["frames"] = callback_state["frames"].copy()
+            camera_result_container["records"] = callback_state["records"].copy()
+            # 保存带标注的帧（用于显示）
+            if len(detected_objects) > 0:
+                camera_result_container["annotated_frame"] = annotated_image.copy()
+        
+        # 使用 PIL 处理以避免内存泄漏（参考官方文档）
+        result_image = Image.fromarray(annotated_image)
+        output_array = np.asarray(result_image)
+        
+        return av.VideoFrame.from_ndarray(output_array, format="bgr24")
     
-    def recv(self, frame):
-        """处理接收到的视频帧"""
-        try:
-            # 首先增加帧计数并立即更新到 detection_results（确保主线程能看到）
-            self.frame_count += 1
-            self.detection_results['frame_count'] = self.frame_count
-            
-            # 调试：打印到控制台（仅在开发环境）
-            # print(f"📹 recv 被调用，frame_count={self.frame_count}")
-            
-            # 如果模型未加载，直接返回原始帧（但帧计数已更新）
-            if self.model is None:
-                return av.VideoFrame.from_ndarray(
-                    frame.to_ndarray(format="bgr24"), 
-                    format="bgr24"
-                )
-            
-            img = frame.to_ndarray(format="bgr24")
-            current_time = time.time()
-            
-            # 初始化检测结果存储
-            if self.detection_results['start_time'] is None:
-                self.detection_results['start_time'] = current_time
-                self.detection_results['last_detect_time'] = current_time
-            
-            if getattr(self, 'stop_camera', False):
-                self.detection_results['last_detect_time'] = current_time
-                return av.VideoFrame.from_ndarray(img, format="bgr24")
-            
-            if self.start_time is None:
-                self.start_time = current_time
-                self.last_detect_time = current_time - self.time_interval - 0.1
-                if self.detection_results['last_detect_time'] is not None:
-                    self.last_detect_time = self.detection_results['last_detect_time']
-            
-            elapsed_since_last = current_time - self.last_detect_time
-            should_detect = (elapsed_since_last >= self.time_interval)
-            
-            if should_detect:
-                self.last_detect_time = current_time
-                self.detection_count += 1
-                self.detection_results['last_detect_time'] = current_time
-                self.detection_results['actual_detection_count'] = self.detection_count
-                
-                try:
-                    results = self.model.predict(
-                        source=img,
-                        conf=self.conf,
-                        iou=self.iou,
-                        device=self.device,
-                        verbose=False,
-                    )
-                    
-                    if results and len(results) > 0:
-                        r = results[0]
-                        boxes_xyxy = r.boxes.xyxy.cpu().numpy() if hasattr(r.boxes, "xyxy") and len(r.boxes.xyxy) > 0 else np.empty((0, 4))
-                        scores = r.boxes.conf.cpu().numpy() if hasattr(r.boxes, "conf") and len(r.boxes.conf) > 0 else np.array([])
-                        cls_ids = r.boxes.cls.cpu().numpy().astype(int) if hasattr(r.boxes, "cls") and len(r.boxes.cls) > 0 else np.array([], dtype=int)
-                        names = r.names if hasattr(r, "names") else {}
-                        cls_names = [names.get(int(c), f"class_{int(c)}") for c in cls_ids] if len(cls_ids) > 0 else []
-                        
-                        if len(boxes_xyxy) > 0:
-                            img = draw_boxes(img, boxes_xyxy.tolist(), cls_names, scores.tolist())
-                            self._save_detection_result(img, boxes_xyxy, cls_names, scores, current_time)
-                        else:
-                            self._save_no_defect_result(img, current_time)
-                    else:
-                        self._save_no_defect_result(img, current_time)
-                except Exception:
-                    try:
-                        self._save_no_defect_result(img, current_time)
-                    except Exception:
-                        pass
-            
-            return av.VideoFrame.from_ndarray(img, format="bgr24")
-        except Exception as e:
-            # 即使出错，也要确保帧计数已更新
-            self.detection_results['frame_count'] = self.frame_count
-            try:
-                # 尝试返回原始帧
-                if hasattr(frame, 'to_ndarray'):
-                    img_array = frame.to_ndarray(format="bgr24")
-                    return av.VideoFrame.from_ndarray(img_array, format="bgr24")
-                return frame
-            except Exception:
-                return av.VideoFrame.from_ndarray(np.zeros((480, 640, 3), dtype=np.uint8), format="bgr24")
-    
-    def _save_detection_result(self, frame_bgr: np.ndarray, boxes_xyxy: np.ndarray, 
-                               cls_names: List[str], scores: np.ndarray, current_time: float):
-        """保存检测结果到实例属性"""
-        try:
-            start_time = self.detection_results.get('start_time', current_time)
-            frames_out = self.detection_results.get('frames', [])
-            all_records = self.detection_results.get('records', [])
-            
-            drawn_16_9 = resize_to_16_9(frame_bgr)
-            frames_out.append(ndarray_to_pil(drawn_16_9))
-            
-            relative_time = current_time - start_time
-            dt = datetime.fromtimestamp(current_time)
-            seconds_of_day = dt.hour * 3600 + dt.minute * 60 + dt.second + dt.microsecond / 1_000_000.0
-            time_str_real_precise = format_seconds_to_hhmmss_mmm(seconds_of_day)
-            date_str = dt.strftime("%Y-%m-%d")
-            widths = (boxes_xyxy[:, 2] - boxes_xyxy[:, 0]).astype(int)
-            heights = (boxes_xyxy[:, 3] - boxes_xyxy[:, 1]).astype(int)
-            detection_index = self.detection_count
-            
-            df_frame = pd.DataFrame({
-                "日期": [date_str] * len(cls_names),
-                "检测序号": [detection_index] * len(cls_names),
-                "帧序号": [self.frame_count] * len(cls_names),
-                "时间点(秒)": [round(relative_time, 2)] * len(cls_names),
-                "绝对时间戳": [round(current_time, 2)] * len(cls_names),
-                "时间点(HH:MM:SS.mmm)": [time_str_real_precise] * len(cls_names),
-                "缺陷类别": cls_names,
-                "置信度": scores,
-                "左上角X": boxes_xyxy[:, 0].astype(int),
-                "左上角Y": boxes_xyxy[:, 1].astype(int),
-                "右下角X": boxes_xyxy[:, 2].astype(int),
-                "右下角Y": boxes_xyxy[:, 3].astype(int),
-                "宽度": widths,
-                "高度": heights,
-                "面积": (widths * heights).astype(int),
-            })
-            all_records.append(df_frame)
-            
-            # 使用深拷贝确保数据完整性
-            self.detection_results['frames'] = copy.deepcopy(frames_out)
-            self.detection_results['records'] = copy.deepcopy(all_records)
-            self.detection_results['detection_count'] = self.detection_count
-            self.detection_results['last_detect_time'] = current_time
-        except Exception:
-            pass
-    
-    def _save_no_defect_result(self, frame_bgr: np.ndarray, current_time: float):
-        """保存没有检测到缺陷的帧信息到实例属性"""
-        try:
-            start_time = self.detection_results.get('start_time', current_time)
-            frames_out = self.detection_results.get('frames', [])
-            all_records = self.detection_results.get('records', [])
-            
-            frame_bgr_16_9 = resize_to_16_9(frame_bgr)
-            frames_out.append(ndarray_to_pil(frame_bgr_16_9))
-            
-            relative_time = current_time - start_time
-            dt = datetime.fromtimestamp(current_time)
-            seconds_of_day = dt.hour * 3600 + dt.minute * 60 + dt.second + dt.microsecond / 1_000_000.0
-            time_str_real_precise = format_seconds_to_hhmmss_mmm(seconds_of_day)
-            date_str = dt.strftime("%Y-%m-%d")
-            detection_index = self.detection_count
-            
-            df_frame = pd.DataFrame({
-                "日期": [date_str],
-                "检测序号": [detection_index],
-                "帧序号": [self.frame_count],
-                "时间点(秒)": [round(relative_time, 2)],
-                "绝对时间戳": [round(current_time, 2)],
-                "时间点(HH:MM:SS.mmm)": [time_str_real_precise],
-                "缺陷类别": [None],
-                "置信度": [None],
-                "左上角X": [None],
-                "左上角Y": [None],
-                "右下角X": [None],
-                "右下角Y": [None],
-                "宽度": [None],
-                "高度": [None],
-                "面积": [None],
-            })
-            all_records.append(df_frame)
-            
-            # 使用深拷贝确保数据完整性
-            self.detection_results['frames'] = copy.deepcopy(frames_out)
-            self.detection_results['records'] = copy.deepcopy(all_records)
-            self.detection_results['last_detect_time'] = current_time
-        except Exception:
-            pass
+    return video_frame_callback
+
+
+def reset_camera_result_container():
+    """重置摄像头结果容器"""
+    global camera_result_container
+    with camera_lock:
+        camera_result_container["objects"] = []
+        camera_result_container["frame_count"] = 0
+        camera_result_container["detection_count"] = 0
+        camera_result_container["last_detect_time"] = 0.0
+        camera_result_container["start_time"] = None
+        camera_result_container["annotated_frame"] = None
+        camera_result_container["frames"] = []
+        camera_result_container["records"] = []
 
 
 def run_camera_detection(
@@ -2669,339 +2618,228 @@ def main():
                 st.rerun()
         with button_col2:
             if st.button("🗑️ 清空检测结果", type="secondary", use_container_width=True, key="clear_camera_results_main"):
+                # 重置全局结果容器
+                reset_camera_result_container()
+                # 重置 session_state
                 if 'camera_detection_results' in st.session_state:
                     st.session_state.camera_detection_results = {
                         'frames': [],
                         'records': [],
                         'frame_count': 0,
                         'detection_count': 0,
-                            'actual_detection_count': 0,
-                        'start_time': time.time(),
-                        'last_detect_time': time.time()
-                    }
-                    st.session_state.stop_camera = False  # 重置停止标志
-                st.rerun()
-        
-            def create_processor():
-                """创建视频处理器实例"""
-                try:
-                    processor = DefectDetectionVideoProcessor()
-                    processor.model = model
-                    processor.conf = conf
-                    processor.iou = iou
-                    processor.device = device
-                    processor.time_interval = time_interval
-                    # 确保模型已正确传递
-                    if processor.model is None and model is not None:
-                        processor.model = model
-                    # 初始化检测结果
-                    processor.detection_results = {
-                        'frames': [],
-                        'records': [],
-                        'frame_count': 0,
-                        'detection_count': 0,
                         'actual_detection_count': 0,
                         'start_time': None,
-                        'last_detect_time': None
+                        'end_time': None,
+                        'class_counts': Counter(),
+                        'all_detections': [],
                     }
-                    return processor
-                except Exception as e:
-                    st.error(f"创建处理器失败: {e}")
-                    return None
+                if 'camera_history' in st.session_state:
+                    st.session_state.camera_history = {
+                        'current_objects': [],
+                        'all_detections': [],
+                        'frame_count': 0,
+                        'start_time': None,
+                        'end_time': None,
+                        'class_counts': Counter(),
+                    }
+                st.session_state.stop_camera = False  # 重置停止标志
+                st.rerun()
+        
+        # 初始化摄像头检测历史（参考 yolo_streamlit_cloud_mini_project_test）
+        if 'camera_history' not in st.session_state:
+            st.session_state.camera_history = {
+                'current_objects': [],
+                'all_detections': [],
+                'frame_count': 0,
+                'start_time': None,
+                'end_time': None,
+                'class_counts': Counter(),
+            }
+        
+        if WEBRTC_AVAILABLE:
+            # 创建视频帧回调函数
+            video_callback = create_defect_detection_callback(
+                model=model,
+                conf=conf,
+                iou=iou,
+                device=device,
+                time_interval=time_interval
+            )
             
-            video_col1, video_col2, video_col3 = st.columns([1, 2, 1])
-            with video_col2:
-                # 获取 ICE 服务器配置（支持 Twilio TURN 或免费 STUN）
-                ice_servers = get_ice_servers()
-                webrtc_ctx = webrtc_streamer(
-                    key="defect-detection",
-                    video_processor_factory=create_processor,
-                    rtc_configuration=RTCConfiguration(
-                        {"iceServers": ice_servers}
-                    ),
-                    media_stream_constraints={"video": True, "audio": False},
-                    async_processing=True,  # 改为 True，确保后台处理
-                )
-                
-                if webrtc_ctx.video_processor:
-                    webrtc_ctx.video_processor.conf = st.session_state.get('camera_conf', conf)
-                    webrtc_ctx.video_processor.iou = st.session_state.get('camera_iou', iou)
-                    webrtc_ctx.video_processor.time_interval = st.session_state.get('camera_time_interval', time_interval)
-                    webrtc_ctx.video_processor.device = st.session_state.get('camera_device', device)
-                    webrtc_ctx.video_processor.stop_camera = st.session_state.get('stop_camera', False)
-                    if webrtc_ctx.video_processor.model is None:
-                        webrtc_ctx.video_processor.model = model
-                    
-                    # 关键：每次循环都从 video_processor 同步数据到 session_state
-                    # 这是解决后台线程无法直接更新 session_state 的关键方案
-                    if hasattr(webrtc_ctx.video_processor, 'detection_results'):
-                        processor_results = webrtc_ctx.video_processor.detection_results
-                        if processor_results:
-                            # 如果检测已开始（start_time 不为 None），同步所有数据
-                            if processor_results.get('start_time') is not None:
-                                st.session_state.camera_detection_results = {
-                                    'frames': copy.deepcopy(processor_results.get('frames', [])),
-                                    'records': copy.deepcopy(processor_results.get('records', [])),
-                                    'frame_count': processor_results.get('frame_count', 0),
-                                    'detection_count': processor_results.get('detection_count', 0),
-                                    'actual_detection_count': processor_results.get('actual_detection_count', 0),
-                                    'start_time': processor_results.get('start_time', time.time()),
-                                    'last_detect_time': processor_results.get('last_detect_time', time.time())
-                                }
-                            # 即使检测未开始，也同步 frame_count（用于显示视频流状态）
-                            else:
-                                if 'camera_detection_results' not in st.session_state:
-                                    st.session_state.camera_detection_results = {
-                                        'frames': [],
-                                        'records': [],
-                                        'frame_count': 0,
-                                        'detection_count': 0,
-                                        'actual_detection_count': 0,
-                                        'start_time': time.time(),
-                                        'last_detect_time': time.time()
-                                    }
-                                if processor_results.get('frame_count', 0) > 0:
-                                    st.session_state.camera_detection_results['frame_count'] = processor_results.get('frame_count', 0)
+            # 获取 ICE 服务器配置
+            ice_servers = get_ice_servers()
             
-            # 在显示 UI 之前，再次确保数据已同步（双重保险）
-            # 这确保在 UI 渲染前数据是最新的
-            if webrtc_ctx.video_processor and hasattr(webrtc_ctx.video_processor, 'detection_results'):
-                processor_results = webrtc_ctx.video_processor.detection_results
-                if processor_results:
-                    if processor_results.get('start_time') is not None:
-                        # 检测已开始，同步完整数据
-                        st.session_state.camera_detection_results = {
-                            'frames': copy.deepcopy(processor_results.get('frames', [])),
-                            'records': copy.deepcopy(processor_results.get('records', [])),
-                            'frame_count': processor_results.get('frame_count', 0),
-                            'detection_count': processor_results.get('detection_count', 0),
-                            'actual_detection_count': processor_results.get('actual_detection_count', 0),
-                            'start_time': processor_results.get('start_time', time.time()),
-                            'last_detect_time': processor_results.get('last_detect_time', time.time())
-                        }
-                    elif processor_results.get('frame_count', 0) > 0:
-                        # 检测未开始但视频流在运行，至少同步 frame_count
-                        if 'camera_detection_results' not in st.session_state:
-                            st.session_state.camera_detection_results = {
-                                'frames': [],
-                                'records': [],
-                                'frame_count': 0,
-                                'detection_count': 0,
-                                'actual_detection_count': 0,
-                                'start_time': time.time(),
-                                'last_detect_time': time.time()
-                            }
-                        st.session_state.camera_detection_results['frame_count'] = processor_results.get('frame_count', 0)
-            
-            if webrtc_ctx.state.playing or webrtc_ctx.video_processor:
-                if 'camera_detection_results' in st.session_state:
-                    results = st.session_state.camera_detection_results
-                    start_time = results.get('start_time', 0)
-                    if abs(time.time() - start_time) < 2.0:
-                        log_camera_sidebar_parameters(current_camera_params)
-                else:
-                    log_camera_sidebar_parameters(current_camera_params)
-            
-            # 调试信息（可选，用于诊断问题）
-            debug_info = st.empty()
-            
-            stats_placeholder = st.empty()
-            table_placeholder = st.empty()
-            chart_placeholder = st.empty()
-            
-            # 显示调试信息
-            if webrtc_ctx.video_processor:
-                processor = webrtc_ctx.video_processor
-                debug_text = f"""
-**🔍 调试信息：**
-- 视频流状态: {'✅ 运行中' if webrtc_ctx.state.playing else '⏸️ 已停止'}
-- 模型状态: {'✅ 已加载' if processor.model is not None else '❌ 未加载'}
-- 处理器实例帧计数: {getattr(processor, 'frame_count', 0)}
-                """
-                
-                if hasattr(processor, 'detection_results'):
-                    processor_results = processor.detection_results
-                    if processor_results:
-                        debug_text += f"""
-- 处理器帧计数: {processor_results.get('frame_count', 0)}
-- 检测次数: {processor_results.get('actual_detection_count', 0)}
-- 检测开始时间: {'✅ 已开始' if processor_results.get('start_time') else '⏳ 未开始'}
-- 保存的帧数: {len(processor_results.get('frames', []))}
-- 保存的记录数: {len(processor_results.get('records', []))}
-                        """
-                        if 'camera_detection_results' in st.session_state:
-                            session_results = st.session_state.camera_detection_results
-                            debug_text += f"""
-- Session State 帧数: {len(session_results.get('frames', []))}
-- Session State 记录数: {len(session_results.get('records', []))}
-- Session State 检测次数: {session_results.get('actual_detection_count', 0)}
-                        """
-                    else:
-                        debug_text += "\n- ⚠️ 处理器结果字典为空"
-                else:
-                    debug_text += "\n- ⚠️ 处理器没有 detection_results 属性"
-                
-                debug_info.info(debug_text)
+            # 显示 TURN 服务器状态
+            if any("turn:" in str(s.get("urls", [])) for s in ice_servers):
+                st.success("✅ TURN 服务器已配置（WebRTC 连接更稳定）")
             else:
-                debug_info.info("ℹ️ 等待视频处理器初始化...")
+                st.warning("⚠️ 使用 STUN 服务器（如在云端部署，请配置 Twilio TURN 以获得更好的连接）")
             
-            if 'camera_detection_results' in st.session_state:
-                if st.session_state.get('stop_camera', False) and not webrtc_ctx.state.playing:
-                    stats_placeholder.info("ℹ️ 检测已停止。请查看下方最终检测结果。")
-                    table_placeholder.empty()
-                    chart_placeholder.empty()
-                elif webrtc_ctx.state.playing or webrtc_ctx.video_processor:
-                    results = st.session_state.camera_detection_results
-                    all_records = results.get('records', [])
-                    start_time = results.get('start_time', time.time())
-                    actual_detection_count = results.get('actual_detection_count', 0)
+            # 主布局：视频和统计信息
+            col_video, col_stats = st.columns([3, 2])
+            
+            with col_video:
+                st.markdown("##### 📹 实时视频流")
+                
+                # WebRTC 配置 - 使用 video_frame_callback 参数（官方推荐方式）
+                ctx = webrtc_streamer(
+                    key="defect-detection",
+                    mode=WebRtcMode.SENDRECV,
+                    video_frame_callback=video_callback,
+                    rtc_configuration={"iceServers": ice_servers},
+                    media_stream_constraints={
+                        "video": {
+                            "width": {"ideal": 640},
+                            "height": {"ideal": 480}
+                        },
+                        "audio": False
+                    },
+                    async_processing=True,
+                )
+            
+            with col_stats:
+                st.markdown("##### 📊 实时检测统计")
+                
+                # 创建占位符用于动态更新
+                status_placeholder = st.empty()
+                stats_placeholder = st.empty()
+                
+                # 当视频正在播放时，使用循环持续更新统计
+                if ctx.state.playing:
+                    status_placeholder.success("🟢 摄像头已连接，正在检测...")
                     
-                    total_defects = 0
-                    if all_records and len(all_records) > 0:
-                        try:
-                            current_df_all = pd.concat(all_records, ignore_index=True)
-                            total_defects = len(current_df_all[current_df_all["缺陷类别"].notna()]) if "缺陷类别" in current_df_all.columns else 0
-                        except Exception:
-                            pass
+                    # 记录开始时间
+                    if st.session_state.camera_history['start_time'] is None:
+                        st.session_state.camera_history['start_time'] = datetime.now()
                     
-                    elapsed_time = time.time() - start_time
-                    if elapsed_time >= 60:
-                        minutes = int(elapsed_time // 60)
-                        seconds = int(elapsed_time % 60)
-                        time_str = f"{minutes}分{seconds}秒"
-                    else:
-                        time_str = f"{int(elapsed_time)}秒"
-                    
-                    stats_placeholder.markdown(
-                        f"""
-                        **实时统计：**
-                        - 总检测时长: {time_str}
-                        - 检测帧数: {actual_detection_count}
-                        - 总缺陷数量: {total_defects}
-                        """
-                    )
-                    
-                    if all_records and len(all_records) > 0:
-                        current_df = pd.concat(all_records, ignore_index=True)
-                        with table_placeholder.container():
-                            st.markdown("#### 📊 实时检测结果报表")
-                            current_df_display = current_df.drop(columns=["绝对时间戳"]) if "绝对时间戳" in current_df.columns else current_df.copy()
-                            if "检测序号" in current_df_display.columns:
-                                current_df_display = current_df_display.copy()
-                                current_df_display["检测序号"] = current_df_display["检测序号"].apply(format_detection_index)
-                            st.dataframe(current_df_display, use_container_width=True, height=300)
+                    # 使用循环持续更新统计信息（参考 yolo_streamlit_cloud_mini_project_test）
+                    while ctx.state.playing:
+                        # 从全局容器读取数据（线程安全）
+                        with camera_lock:
+                            objects = camera_result_container["objects"].copy()
+                            frame_count = camera_result_container["frame_count"]
+                            detection_count = camera_result_container["detection_count"]
+                            start_time_container = camera_result_container["start_time"]
+                            frames_container = camera_result_container.get("frames", []).copy()
+                            records_container = camera_result_container.get("records", []).copy()
                         
-                        with chart_placeholder.container():
-                            st.markdown("#### ⏱️ 缺陷出现时间分布")
-                            if "时间点(HH:MM:SS.mmm)" in current_df.columns:
-                                all_time_points = (
-                                    current_df["时间点(HH:MM:SS.mmm)"]
-                                    .astype(str)
-                                    .dropna()
-                                    .sort_values()
-                                    .reset_index(drop=True)
-                                    .unique()
-                                )
-                                if len(all_time_points) > 0:
-                                    defect_df = current_df[current_df["缺陷类别"].notna()].copy()
-                                    if not defect_df.empty:
-                                        defect_counts = (
-                                            defect_df.groupby("时间点(HH:MM:SS.mmm)")
-                                            .size()
-                                            .reindex(all_time_points, fill_value=0)
-                                        )
-                                    else:
-                                        defect_counts = pd.Series([0] * len(all_time_points), index=all_time_points)
-                                    time_counts = pd.DataFrame({
-                                        "时间点": all_time_points,
-                                        "缺陷数量": defect_counts.values,
-                                    })
-                                    chart = (
-                                        alt.Chart(time_counts)
-                                        .mark_line(point=True)
-                                        .encode(
-                                            x=alt.X(field="时间点", type="nominal", sort=None, title="时间点"),
-                                            y=alt.Y(field="缺陷数量", type="quantitative", title="缺陷数量"),
-                                        )
-                                        .properties(height=300)
-                                    )
-                                    st.altair_chart(chart, use_container_width=True)
-                                else:
-                                    st.info("等待检测数据...")
-                            else:
-                                st.info("等待检测数据...")
-                    else:
-                        st.info("等待检测数据...")
-            
-            # 定期从 video_processor 同步数据到 session_state，并触发 UI 刷新
-            should_refresh = False
-            has_new_data = False
-            
-            # 如果视频流正在运行，持续同步数据
-            if webrtc_ctx.video_processor and hasattr(webrtc_ctx.video_processor, 'detection_results'):
-                processor_results = webrtc_ctx.video_processor.detection_results
-                if processor_results:
-                    # 同步最新数据（无论是否检测已开始，都要同步）
-                    old_records_count = 0
-                    old_frames_count = 0
-                    old_detection_count = 0
-                    
-                    if 'camera_detection_results' in st.session_state:
-                        old_records_count = len(st.session_state.camera_detection_results.get('records', []))
-                        old_frames_count = len(st.session_state.camera_detection_results.get('frames', []))
-                        old_detection_count = st.session_state.camera_detection_results.get('actual_detection_count', 0)
-                    
-                    # 如果检测已开始，同步完整数据
-                    if processor_results.get('start_time') is not None:
+                        # 累积保存检测结果
+                        if objects:
+                            st.session_state.camera_history['current_objects'] = objects
+                            st.session_state.camera_history['frame_count'] = frame_count
+                            
+                            # 累积所有检测结果
+                            st.session_state.camera_history['all_detections'].extend(objects)
+                            
+                            # 更新类别计数
+                            for obj in objects:
+                                st.session_state.camera_history['class_counts'][obj["class"]] += 1
+                        
+                        # 同步数据到 camera_detection_results（供后面的详细结果展示使用）
                         st.session_state.camera_detection_results = {
-                            'frames': copy.deepcopy(processor_results.get('frames', [])),
-                            'records': copy.deepcopy(processor_results.get('records', [])),
-                            'frame_count': processor_results.get('frame_count', 0),
-                            'detection_count': processor_results.get('detection_count', 0),
-                            'actual_detection_count': processor_results.get('actual_detection_count', 0),
-                            'start_time': processor_results.get('start_time', time.time()),
-                            'last_detect_time': processor_results.get('last_detect_time', time.time())
+                            'frames': frames_container,
+                            'records': records_container,
+                            'frame_count': frame_count,
+                            'detection_count': detection_count,
+                            'actual_detection_count': detection_count,
+                            'start_time': start_time_container if start_time_container else time.time(),
+                            'last_detect_time': time.time()
                         }
                         
-                        # 检查是否有新数据
-                        new_records_count = len(st.session_state.camera_detection_results.get('records', []))
-                        new_frames_count = len(st.session_state.camera_detection_results.get('frames', []))
-                        new_detection_count = st.session_state.camera_detection_results.get('actual_detection_count', 0)
+                        # 渲染实时统计
+                        with stats_placeholder.container():
+                            if not objects and detection_count == 0:
+                                st.info("📊 等待检测结果... 请确保摄像头已开启")
+                            else:
+                                st.caption(f"🔴 实时检测中 | 已处理 {frame_count} 帧 | 已检测 {detection_count} 次")
+                                
+                                if objects:
+                                    st.success(f"✅ 当前帧检测到 **{len(objects)}** 个缺陷")
+                                    
+                                    # 当前帧详情
+                                    df_current = pd.DataFrame([
+                                        {"缺陷类别": obj["class"], "置信度": f"{obj['confidence']:.2%}"}
+                                        for obj in objects
+                                    ])
+                                    st.dataframe(df_current, use_container_width=True, height=150)
+                                else:
+                                    st.info("当前帧未检测到缺陷")
                         
-                        if (new_records_count > old_records_count or 
-                            new_frames_count > old_frames_count or
-                            new_detection_count > old_detection_count):
-                            has_new_data = True
-                    else:
-                        # 检测未开始，但也要同步 frame_count
-                        if 'camera_detection_results' not in st.session_state:
-                            st.session_state.camera_detection_results = {
-                                'frames': [],
-                                'records': [],
-                                'frame_count': 0,
-                                'detection_count': 0,
-                                'actual_detection_count': 0,
-                                'start_time': time.time(),
-                                'last_detect_time': time.time()
-                            }
-                        st.session_state.camera_detection_results['frame_count'] = processor_results.get('frame_count', 0)
+                        # 短暂休眠，避免过于频繁的更新
+                        time.sleep(0.5)
+                    
+                    # 循环结束，记录结束时间
+                    st.session_state.camera_history['end_time'] = datetime.now()
+                    
+                    # 最终同步数据
+                    with camera_lock:
+                        frames_final = camera_result_container.get("frames", []).copy()
+                        records_final = camera_result_container.get("records", []).copy()
+                        frame_count_final = camera_result_container["frame_count"]
+                        detection_count_final = camera_result_container["detection_count"]
+                        start_time_final = camera_result_container["start_time"]
+                    
+                    st.session_state.camera_detection_results = {
+                        'frames': frames_final,
+                        'records': records_final,
+                        'frame_count': frame_count_final,
+                        'detection_count': detection_count_final,
+                        'actual_detection_count': detection_count_final,
+                        'start_time': start_time_final if start_time_final else time.time(),
+                        'last_detect_time': time.time()
+                    }
+                    
+                else:
+                    status_placeholder.info("👆 点击 'START' 按钮开启摄像头")
+                    
+                    # 从 session_state 读取保存的历史结果
+                    history = st.session_state.camera_history
+                    
+                    with stats_placeholder.container():
+                        if history['all_detections']:
+                            # 显示汇总统计
+                            all_detections = history['all_detections']
+                            class_counts = history['class_counts']
+                            start_time_hist = history['start_time']
+                            end_time_hist = history['end_time']
+                            
+                            # 计算检测时长
+                            if start_time_hist and end_time_hist:
+                                duration = (end_time_hist - start_time_hist).total_seconds()
+                                duration_str = f"{duration:.1f} 秒"
+                            else:
+                                duration_str = "未知"
+                            
+                            st.caption(f"⏹️ 检测已停止（结果已汇总）")
+                            
+                            # 汇总统计
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("📷 处理帧数", f"{history['frame_count']}")
+                            with col2:
+                                st.metric("🎯 总检测数", f"{len(all_detections)}")
+                            
+                            col3, col4 = st.columns(2)
+                            with col3:
+                                st.metric("📦 类别数", f"{len(class_counts)}")
+                            with col4:
+                                st.metric("⏱️ 检测时长", duration_str)
+                            
+                            # 类别统计
+                            if class_counts:
+                                st.markdown("##### 📊 各类别检测次数")
+                                df_counts = pd.DataFrame({
+                                    "缺陷类别": list(class_counts.keys()),
+                                    "检测次数": list(class_counts.values())
+                                })
+                                df_counts = df_counts.sort_values("检测次数", ascending=False)
+                                st.bar_chart(df_counts.set_index("缺陷类别"))
+                        else:
+                            st.info("📊 请先开启摄像头进行检测")
             
-            # 如果视频流正在播放，需要定期刷新 UI
-            if webrtc_ctx.state.playing:
-                should_refresh = True
-            
-            # 执行 UI 刷新逻辑
-            if should_refresh:
-                if 'last_ui_refresh_time' not in st.session_state:
-                    st.session_state.last_ui_refresh_time = time.time()
-                
-                current_time = time.time()
-                elapsed_since_refresh = current_time - st.session_state.last_ui_refresh_time
-                
-                # 如果有新数据或超过0.5秒，刷新 UI
-                if has_new_data or elapsed_since_refresh >= 0.5:
-                    st.session_state.last_ui_refresh_time = current_time
-                    st.rerun()
+            # 记录参数到日志
+            if ctx.state.playing:
+                log_camera_sidebar_parameters(current_camera_params)
         
         # 从session_state获取完整的检测结果（如果检测还在进行中或已完成，显示当前结果）
         df = pd.DataFrame()
