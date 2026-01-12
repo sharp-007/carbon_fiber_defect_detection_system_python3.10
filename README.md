@@ -32,7 +32,8 @@ carbon_fiber_defect_detection_system/
   │  └─ test/               # 测试集（images + labels）
   ├─ model/                 # 模型文件目录
   │  ├─ yolo11n.pt          # YOLO11n 预训练模型
-  │  └─ best.pt             # 训练后的最佳模型（训练后生成）
+  │  ├─ best.pt             # 训练后的最佳模型（训练后生成）
+  │  └─ last.pt             # 训练后的最后模型（训练后生成）
   ├─ log/                   # 日志目录（运行时生成）
   ├─ test_image_video/      # 测试图片和视频目录
   ├─ test_demo/             # 演示结果目录
@@ -1054,33 +1055,10 @@ A: 本项目代码完全兼容 Python 3.10，无需修改。主要区别是 Stre
 
 本项目采用 **MIT 许可证** 开源。
 
-```
-MIT License
-
-Copyright (c) 2024-2026 Joyce Pan
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
 **数据集许可证**：CC BY 4.0（来自 Roboflow）
 
 **第三方依赖许可证**：
+
 - Ultralytics (YOLO): AGPL-3.0
 - Streamlit: Apache-2.0
 - OpenCV: Apache-2.0
