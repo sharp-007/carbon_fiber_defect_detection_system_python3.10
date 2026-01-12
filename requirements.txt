@@ -1,5 +1,5 @@
 # Python 版本要求
-# 本项目需要 Python 3.10 或更高版本（Streamlit Cloud 最低要求 Python 3.10）
+# 本项目需要 Python 3.10 或更高版本（Streamlit Cloud 发布最低要求 Python 3.10）
 # 注意：项目最初在 Python 3.9 环境下开发，现已升级支持 Python 3.10+
 
 # Web 应用框架
