@@ -2646,6 +2646,10 @@ def main():
         if 'stop_camera' not in st.session_state:
             st.session_state.stop_camera = False
         
+        # 初始化摄像头播放状态跟踪（用于检测状态变化并记录日志）
+        if 'camera_was_playing' not in st.session_state:
+            st.session_state.camera_was_playing = False
+        
         # 注意：停止检测按钮已移除，使用 webrtc_streamer 自带的 STOP 按钮
         # 清空检测结果按钮放在 webrtc_streamer 组件下方
         
@@ -2737,6 +2741,9 @@ def main():
             
             # 当视频正在播放时，使用循环持续更新统计
             if ctx.state.playing:
+                # 标记摄像头正在播放
+                st.session_state.camera_was_playing = True
+                
                 with col_stats:
                     status_placeholder.success("🟢 摄像头已连接，正在检测...")
                 
@@ -2796,12 +2803,12 @@ def main():
                         # 检测时长
                         st.metric("⏱️ 检测时长", time_str)
                         
-                        # 当前帧缺陷数及置信度（表格形式）
+                        # 当前帧缺陷数及置信度（表格形式，带序号）
                         st.markdown("**🎯 当前帧检测结果**")
                         if current_defect_count > 0 and objects:
                             df_current = pd.DataFrame([
-                                {"缺陷类别": obj["class"], "置信度": f"{obj['confidence']:.2%}"}
-                                for obj in objects
+                                {"序号": i + 1, "缺陷类别": obj["class"], "置信度": f"{obj['confidence']:.2%}"}
+                                for i, obj in enumerate(objects)
                             ])
                             st.dataframe(df_current, use_container_width=True, hide_index=True)
                         else:
@@ -2889,6 +2896,12 @@ def main():
                 }
                 
             else:
+                # 检测状态变化：从播放变为停止时记录日志
+                if st.session_state.camera_was_playing:
+                    st.session_state.camera_was_playing = False
+                    # 记录参数到日志
+                    log_camera_sidebar_parameters(current_camera_params)
+                
                 with col_stats:
                     # 从 session_state 读取保存的历史结果
                     history = st.session_state.camera_history
@@ -2897,12 +2910,14 @@ def main():
                         if history['all_detections']:
                             # 显示汇总统计：只显示检测时长、总缺陷数、平均置信度
                             all_detections = history['all_detections']
-                            start_time_hist = history['start_time']
-                            end_time_hist = history['end_time']
                             
-                            # 计算检测时长
-                            if start_time_hist and end_time_hist:
-                                duration = (end_time_hist - start_time_hist).total_seconds()
+                            # 计算检测时长 - 从 camera_detection_results 获取时间信息
+                            detection_results = st.session_state.get('camera_detection_results', {})
+                            start_time_ts = detection_results.get('start_time')
+                            end_time_ts = detection_results.get('last_detect_time')
+                            
+                            if start_time_ts and end_time_ts:
+                                duration = end_time_ts - start_time_ts
                                 if duration >= 60:
                                     minutes = int(duration // 60)
                                     seconds = int(duration % 60)
@@ -2910,7 +2925,7 @@ def main():
                                 else:
                                     duration_str = f"{duration:.1f}秒"
                             else:
-                                duration_str = "未知"
+                                duration_str = "0秒"
                             
                             # 计算平均置信度
                             if all_detections:
@@ -2925,10 +2940,6 @@ def main():
                             st.metric("🎯 总缺陷数", len(all_detections))
                             # 平均置信度
                             st.metric("📊 平均置信度", f"{avg_confidence:.2%}")
-            
-            # 记录参数到日志
-            if ctx.state.playing:
-                log_camera_sidebar_parameters(current_camera_params)
         
         # 从session_state获取完整的检测结果（如果检测还在进行中或已完成，显示当前结果）
         df = pd.DataFrame()
@@ -2942,17 +2953,6 @@ def main():
                 frames = st.session_state.camera_detection_results.get('frames', [])
         
         if not df.empty:
-            # 统计信息 - 紧凑显示（只统计有缺陷的记录）
-            df_with_defects = df[df["缺陷类别"].notna()]  # 过滤掉缺陷类别为空的记录
-            stat_col1, stat_col2 = st.columns(2)
-            with stat_col1:
-                st.metric("总缺陷数", len(df_with_defects) if not df_with_defects.empty else 0)
-            with stat_col2:
-                if not df_with_defects.empty and df_with_defects["置信度"].notna().any():
-                    st.metric("平均置信度", f"{df_with_defects['置信度'].mean():.3f}")
-                else:
-                    st.metric("平均置信度", "0.000")
-            
             # 使用expander折叠详细信息
             with st.expander("📋 查看详细检测结果", expanded=False):
                 # 显示详细表格（去掉绝对时间戳列，格式化检测序号）
