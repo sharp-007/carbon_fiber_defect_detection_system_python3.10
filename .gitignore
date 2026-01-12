@@ -1,0 +1,76 @@
+# ========================================
+# Carbon Fiber Defect Detection System
+# .gitignore - 不影响 Streamlit Cloud 部署
+# ========================================
+
+# ----------------
+# Python 缓存
+# ----------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ----------------
+# Jupyter Notebook
+# ----------------
+.ipynb_checkpoints/
+*.ipynb
+
+# ----------------
+# 环境变量和密钥
+# ----------------
+.env
+.env.local
+.env.*.local
+*.pem
+credentials.json
+
+# ----------------
+# 虚拟环境
+# ----------------
+venv/
+env/
+.venv/
+.conda/
+
+# ----------------
+# IDE 和编辑器
+# ----------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+
+# ----------------
+# 临时文件
+# ----------------
+*.tmp
+*.temp
+*.bak
+*.cache
+
+# ----------------
+# 根目录下的额外模型文件
+# （model/ 目录中的模型会保留）
+# ----------------
+/yolo11n.pt
+
+# ========================================
+# 以下文件/目录必须保留（Streamlit Cloud 需要）
+# ========================================
+# !app.py              - 主应用程序
+# !requirements.txt    - Python 依赖
+# !packages.txt        - 系统包依赖
+# !runtime.txt         - Python 版本
+# !.streamlit/         - Streamlit 配置
+# !turn.py             - TURN 服务器配置
+# !train.py            - 训练脚本
+# !test.py             - 测试脚本
+# !model/              - 模型文件目录
+# !test_image_video/   - 测试图片和视频
+# !README.md           - 项目说明

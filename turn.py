@@ -1,9 +1,8 @@
 """
 TURN 服务器配置模块
-
 用于在 Streamlit Cloud 上部署 WebRTC 应用时获取 ICE 服务器配置。
 支持 Twilio TURN 服务器和免费的 Google STUN 服务器作为回退方案。
-
+一般情况下STUN服务器可用。
 参考: https://github.com/whitphx/streamlit-webrtc
 """
 import os

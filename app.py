@@ -6,6 +6,9 @@ import logging
 # 这个警告在 streamlit-webrtc 的后台线程中是正常的，可以安全忽略
 warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
 warnings.filterwarnings("ignore", category=UserWarning, message=".*ScriptRunContext.*")
+# 忽略 use_container_width 废弃警告（功能正常，只是参数名即将变更）
+warnings.filterwarnings("ignore", message=".*use_container_width.*")
+warnings.filterwarnings("ignore", message=".*will be removed after.*")
 logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
 logging.getLogger("streamlit.runtime.state").setLevel(logging.ERROR)
 
