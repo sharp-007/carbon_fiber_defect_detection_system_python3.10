@@ -36,6 +36,9 @@ altair>=4.2.0
 # 配置文件解析
 pyyaml>=6.0.0
 
+# 时区支持（用于 Streamlit Cloud 显示北京时间）
+pytz>=2024.1
+
 # 深度学习框架（ultralytics 会自动安装 torch，但明确列出以确保兼容性）
 # 注意：ultralytics 会自动安装 torch，但 train.py 中直接导入 torch
 # Streamlit Cloud 使用 CPU 版本，如需 GPU 请使用其他平台

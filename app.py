@@ -9,8 +9,46 @@ warnings.filterwarnings("ignore", category=UserWarning, message=".*ScriptRunCont
 # 忽略 use_container_width 废弃警告（功能正常，只是参数名即将变更）
 warnings.filterwarnings("ignore", message=".*use_container_width.*")
 warnings.filterwarnings("ignore", message=".*will be removed after.*")
+warnings.filterwarnings("ignore", message=".*Please replace.*use_container_width.*")
+warnings.filterwarnings("ignore", message=".*For.*use_container_width.*")
+# 忽略 pandas DataFrame concatenation 的 FutureWarning（功能正常，只是未来版本行为变更）
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*DataFrame concatenation.*")
+
+# 设置 Streamlit 日志级别，过滤警告信息
 logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
 logging.getLogger("streamlit.runtime.state").setLevel(logging.ERROR)
+
+# 创建自定义日志过滤器来过滤 use_container_width 相关警告
+class UseContainerWidthFilter(logging.Filter):
+    """过滤 use_container_width 相关的警告信息"""
+    def filter(self, record):
+        message = record.getMessage()
+        # 过滤包含 use_container_width 的警告
+        if "use_container_width" in message.lower() or "Please replace" in message:
+            return False
+        return True
+
+# 为 Streamlit 的所有 logger 添加过滤器（在导入 streamlit 之前先设置）
+# 注意：导入 streamlit 后需要再次设置，因为 logger 是在导入时创建的
+def setup_streamlit_warning_filters():
+    """设置 Streamlit 警告过滤器"""
+    # 为所有 Streamlit logger 添加过滤器
+    for logger_name in logging.Logger.manager.loggerDict:
+        if "streamlit" in logger_name.lower():
+            logger = logging.getLogger(logger_name)
+            # 检查是否已经添加了过滤器，避免重复添加
+            if not any(isinstance(f, UseContainerWidthFilter) for f in logger.filters):
+                logger.addFilter(UseContainerWidthFilter())
+            # 设置日志级别为 ERROR，只显示错误信息
+            logger.setLevel(logging.ERROR)
+    
+    # 也为根 logger 添加过滤器
+    root_logger = logging.getLogger()
+    if not any(isinstance(f, UseContainerWidthFilter) for f in root_logger.filters):
+        root_logger.addFilter(UseContainerWidthFilter())
+
+# 先执行一次（在导入 streamlit 之前）
+setup_streamlit_warning_filters()
 
 # 在导入 OpenCV 之前设置环境变量，禁用 GUI 功能（适用于 headless 环境）
 # 注意：这些设置不会影响 cv2.VideoCapture() 和视频文件读取功能
@@ -30,14 +68,17 @@ import zipfile
 import io
 import copy
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Tuple, Optional, Callable
 from collections import Counter
+import pytz
 
 import numpy as np
 import pandas as pd
 import streamlit as st
+# 导入 streamlit 后再次设置警告过滤器
+setup_streamlit_warning_filters()
 from PIL import Image
 import matplotlib
 import altair as alt
@@ -916,10 +957,21 @@ def sidebar_controls() -> Tuple[Optional[Path], str, str, float, float, int, flo
     return model_path, mode, device, conf, iou, frame_step, time_interval, camera_index, max_frames
 
 
+# 定义北京时区（用于 Streamlit Cloud 显示正确的本地时间）
+BEIJING_TZ = pytz.timezone('Asia/Shanghai')
+
+def get_beijing_now():
+    """获取当前北京时间"""
+    return datetime.now(BEIJING_TZ)
+
+def get_beijing_datetime_from_timestamp(timestamp: float):
+    """将 UTC 时间戳转换为北京时间的 datetime 对象"""
+    utc_dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    return utc_dt.astimezone(BEIJING_TZ)
+
 def format_real_time(timestamp: float) -> str:
-    """将时间戳格式化为实际时间 HH:MM:SS 格式（不带毫秒）"""
-    from datetime import datetime
-    dt = datetime.fromtimestamp(timestamp)
+    """将时间戳格式化为实际时间 HH:MM:SS 格式（不带毫秒），使用北京时间"""
+    dt = get_beijing_datetime_from_timestamp(timestamp)
     return dt.strftime("%H:%M:%S")  # 只保留时分秒
 
 def format_seconds_to_hhmmss_mmm(seconds: float) -> str:
@@ -1171,10 +1223,10 @@ def create_defect_detection_callback(model, conf: float, iou: float, device: str
             callback_state["last_detect_time"] = current_time
             callback_state["detection_count"] += 1
             
-            # 计算时间信息（无论是否有缺陷都需要）
+            # 计算时间信息（无论是否有缺陷都需要，使用北京时间）
             start_time_val = callback_state["start_time"]
             relative_time = current_time - start_time_val
-            dt = datetime.fromtimestamp(current_time)
+            dt = get_beijing_datetime_from_timestamp(current_time)  # 使用北京时间
             seconds_of_day = dt.hour * 3600 + dt.minute * 60 + dt.second + dt.microsecond / 1_000_000.0
             time_str_real_precise = format_seconds_to_hhmmss_mmm(seconds_of_day)
             date_str = dt.strftime("%Y-%m-%d")
@@ -1440,7 +1492,7 @@ def run_camera_detection(
                         # - 相对时间（从检测开始算起，秒），保留在"时间点(秒)"列
                         # - 实际时间（当天时刻，精确到 0.1 秒），保留在"时间点(HH:MM:SS.mmm)"列，用于表格和统计图
                         relative_time = current_time - start_time  # 相对时间（秒）
-                        dt = datetime.fromtimestamp(current_time)
+                        dt = get_beijing_datetime_from_timestamp(current_time)  # 使用北京时间
                         # 使用摄像头实际时间点（当天秒数），不进行四舍五入，格式化为 HH:MM:SS.m（0.1 秒精度）
                         seconds_of_day = dt.hour * 3600 + dt.minute * 60 + dt.second + dt.microsecond / 1_000_000.0
                         time_str_real_precise = format_seconds_to_hhmmss_mmm(seconds_of_day)
@@ -1490,7 +1542,7 @@ def run_camera_detection(
                         
                         # 记录检测结果（缺陷相关字段为空值）
                         relative_time = current_time - start_time  # 相对时间（秒）
-                        dt = datetime.fromtimestamp(current_time)
+                        dt = get_beijing_datetime_from_timestamp(current_time)  # 使用北京时间
                         seconds_of_day = dt.hour * 3600 + dt.minute * 60 + dt.second + dt.microsecond / 1_000_000.0
                         time_str_real_precise = format_seconds_to_hhmmss_mmm(seconds_of_day)  # 实际时间（精确到 0.1 秒，不四舍五入）
                         date_str = dt.strftime("%Y-%m-%d")  # 日期字符串
@@ -2750,9 +2802,9 @@ def main():
                 with col_stats:
                     status_placeholder.success("🟢 摄像头已连接，正在检测...")
                 
-                # 记录开始时间
+                # 记录开始时间（使用北京时间）
                 if st.session_state.camera_history['start_time'] is None:
-                    st.session_state.camera_history['start_time'] = datetime.now()
+                    st.session_state.camera_history['start_time'] = get_beijing_now()
                 
                 # 使用循环持续更新统计信息（参考 yolo_streamlit_cloud_mini_project_test）
                 while ctx.state.playing:
@@ -2877,8 +2929,8 @@ def main():
                     # 短暂休眠，避免过于频繁的更新
                     time.sleep(0.5)
                 
-                # 循环结束，记录结束时间
-                st.session_state.camera_history['end_time'] = datetime.now()
+                # 循环结束，记录结束时间（使用北京时间）
+                st.session_state.camera_history['end_time'] = get_beijing_now()
                 
                 # 最终同步数据
                 with camera_lock:
