@@ -10,6 +10,12 @@
 - ✅ 摄像头实时检测支持实时检测框生成、关键帧图片展示与批量下载
 - ✅ 支持自定义模型加载，支持自定义置信度、IoU阈值、检测频率、输出帧率、最大检测帧数，支持CPU和GPU推理加速
 
+### 系统演示-视频模式界面
+
+![视频模式Demo-1](test_demo/streamlit_result_demo/视频模式/工业缺陷检测系统-视频模式-Demo_页面_1.jpg)
+
+![视频模式Demo-2](test_demo/streamlit_result_demo/视频模式/工业缺陷检测系统-视频模式-Demo_页面_2.jpg)
+
 ### 项目结构
 
 ```text
