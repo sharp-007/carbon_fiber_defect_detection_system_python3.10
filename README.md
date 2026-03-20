@@ -16,6 +16,12 @@
 
 ![视频模式Demo-2](test_demo/streamlit_result_demo/视频模式/工业缺陷检测系统-视频模式-Demo_页面_2.jpg)
 
+### 系统演示-视频
+
+[![YouTube 视频演示](https://img.youtube.com/vi/EXzDLKLUBks/maxresdefault.jpg)](https://www.youtube.com/watch?v=EXzDLKLUBks)
+
+👉 [点击观看完整演示视频](https://www.youtube.com/watch?v=EXzDLKLUBks)
+
 ### 项目结构
 
 ```text
